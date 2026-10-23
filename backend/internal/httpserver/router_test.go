@@ -1,0 +1,131 @@
+package httpserver
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
+// fakePinger stands in for the database; ping decides the outcome.
+type fakePinger struct {
+	ping func(ctx context.Context) error
+}
+
+func (f fakePinger) PingContext(ctx context.Context) error { return f.ping(ctx) }
+
+func pingOK() Pinger {
+	return fakePinger{ping: func(context.Context) error { return nil }}
+}
+
+func get(t *testing.T, r http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	return w
+}
+
+func statusField(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON body: %v", err)
+	}
+	return body["status"]
+}
+
+func TestLiveDoesNotTouchDatabase(t *testing.T) {
+	db := fakePinger{ping: func(context.Context) error {
+		t.Error("live must not ping the database")
+		return nil
+	}}
+	w := get(t, NewRouter(discardLogger(), db), "/api/health/live")
+
+	if w.Code != http.StatusOK || statusField(t, w) != "ok" {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestReady(t *testing.T) {
+	const secretDetail = "dial postgres://app:test-placeholder-pw@db:5432 refused"
+
+	tests := []struct {
+		name       string
+		ping       func(ctx context.Context) error
+		wantCode   int
+		wantStatus string
+	}{
+		{
+			name:       "database available",
+			ping:       func(context.Context) error { return nil },
+			wantCode:   http.StatusOK,
+			wantStatus: "ready",
+		},
+		{
+			name:       "database unavailable",
+			ping:       func(context.Context) error { return errors.New(secretDetail) },
+			wantCode:   http.StatusServiceUnavailable,
+			wantStatus: "unavailable",
+		},
+		{
+			name: "ping bounded by timeout",
+			ping: func(ctx context.Context) error {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > readyTimeout {
+					return errors.New("ping context has no deadline within readyTimeout")
+				}
+				// Behave like a database that never answers.
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			wantCode:   http.StatusServiceUnavailable,
+			wantStatus: "unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := get(t, NewRouter(discardLogger(), fakePinger{ping: tt.ping}), "/api/health/ready")
+
+			if w.Code != tt.wantCode || statusField(t, w) != tt.wantStatus {
+				t.Fatalf("got %d %s, want %d %q", w.Code, w.Body.String(), tt.wantCode, tt.wantStatus)
+			}
+			if strings.Contains(w.Body.String(), "postgres://") || strings.Contains(w.Body.String(), "refused") {
+				t.Fatalf("response exposes internal error: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequestLogger(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRouter(slog.New(slog.NewJSONHandler(&buf, nil)), pingOK())
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/health/live?token=secret", nil))
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("log line is not JSON: %v (%q)", err, buf.String())
+	}
+	if entry["method"] != "GET" || entry["path"] != "/api/health/live" || entry["status"] != float64(200) {
+		t.Fatalf("unexpected log entry: %v", entry)
+	}
+	if _, ok := entry["duration_ms"]; !ok {
+		t.Fatalf("log entry has no duration_ms: %v", entry)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("secret")) {
+		t.Fatal("query string leaked into the request log")
+	}
+}
