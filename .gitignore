@@ -1,0 +1,26 @@
+# Environment files (keep the example)
+.env
+.env.*
+!.env.example
+
+# Frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Go build artifacts
+backend/bin/
+*.exe
+*.test
+*.out
+
+# Python (later phases)
+.venv/
+
+# OS
+.DS_Store
+
+# Personal AI tool configs
+.claude/settings.local.json
+CLAUDE.local.md
+.mcp.json
