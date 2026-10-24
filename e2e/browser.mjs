@@ -248,9 +248,12 @@ async function main() {
   await waitFor(`document.body.innerText.includes('E2E 鸡胸肉沙拉（大份）') && !document.querySelector('select')`, 'meal edited')
   check('meal edited', true)
 
-  // Persistence: reload.
+  // Persistence: reload. Page.reload returns before the new document exists, so
+  // mark the old one and wait until the mark is gone and the data is rendered.
+  await evaluate('window.__beforeReload = true')
   await send('Page.reload')
-  await waitFor(`document.body.innerText.includes('E2E 夜间实验') && document.body.innerText.includes('（大份）')`, 'data after reload')
+  await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
+    document.body.innerText.includes('E2E 夜间实验') && document.body.innerText.includes('（大份）')`, 'data after reload')
   check('data still there after reload', true)
 
   // Delete the event (accept the confirm dialog).
