@@ -2,6 +2,7 @@
 //
 // Tests using it are skipped unless TEST_DATABASE_URL points at a PostgreSQL
 // server where the user may create databases (the compose superuser can).
+// When CI is set they fail instead of skipping.
 // `make test-integration` sets it from .env; nothing here reads .env itself.
 package testdb
 
@@ -38,6 +39,11 @@ func New(t *testing.T) *DB {
 	t.Helper()
 	adminURL := os.Getenv(envVar)
 	if adminURL == "" {
+		// CI (GitHub Actions sets CI=true) must run these tests; a silent
+		// skip there would hide a broken database setup.
+		if os.Getenv("CI") != "" {
+			t.Fatal(envVar + " is not set; integration tests must not be skipped in CI")
+		}
 		t.Skip("integration test skipped: " + envVar + " is not set (run `make test-integration`)")
 	}
 
