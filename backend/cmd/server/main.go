@@ -12,9 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"mogumogu/backend/internal/auth"
 	"mogumogu/backend/internal/config"
 	"mogumogu/backend/internal/database"
 	"mogumogu/backend/internal/httpserver"
+	"mogumogu/backend/internal/store"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -36,7 +38,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	_, sqlDB, err := database.Open(cfg.DB)
+	gormDB, sqlDB, err := database.Open(cfg.DB)
 	if err != nil {
 		return err
 	}
@@ -48,13 +50,24 @@ func run(logger *slog.Logger) error {
 		logger.Info("database pool closed")
 	}()
 	logger.Info("database pool configured", slog.Any("db", cfg.DB))
+	logger.Info("auth configured", slog.Any("auth", cfg.Auth))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	srv := &http.Server{
-		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.AppPort)),
-		Handler:           httpserver.NewRouter(logger, sqlDB),
+		Addr: net.JoinHostPort("", strconv.Itoa(cfg.AppPort)),
+		Handler: httpserver.NewRouter(httpserver.Deps{
+			Logger:          logger,
+			DB:              sqlDB,
+			Store:           store.New(gormDB),
+			Sessions:        auth.NewSessions(cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, cfg.Auth.JWTAudience, cfg.Auth.JWTTTL),
+			CSRF:            auth.NewCSRF(cfg.Auth.CSRFSecret),
+			LoginLimiter:    auth.NewLimiter(5, 15*time.Minute),
+			RegisterLimiter: auth.NewLimiter(10, time.Hour),
+			AllowedOrigins:  cfg.Auth.AllowedOrigins,
+			CookieSecure:    cfg.Auth.CookieSecure,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
