@@ -2,21 +2,26 @@
 
 以日历为中心的饮食推荐应用。长期目标与约定见 [docs/project-review.md](docs/project-review.md)，API 约定见 [docs/api.md](docs/api.md)，各阶段的范围见 [plans/](plans/)。
 
-当前完成到**阶段 2**：
+当前完成到**阶段 3**：
 - 可以注册、登录、退出。
 - 可以填写 Profile。
 - 可以在日历上记录行程和饮食。
 - 数据保存在 PostgreSQL 中，并按用户隔离。
+- 可以用 Docker Compose 以容器方式运行整套服务（Nginx + 后端 + 数据库）。
+- 每次 push 和 PR 由 GitHub Actions 自动测试；数据库可以备份并已做过恢复演练。
 
-AI 推荐（Ask AI）要到阶段 4 才实现，目前只显示为禁用的按钮。PostgreSQL 在 Docker Compose 中运行，Go 后端和 Vue 前端都在宿主机上运行。
+AI 推荐（Ask AI）要到阶段 4 才实现，目前只显示为禁用的按钮。日常开发时 PostgreSQL 在 Docker Compose 中运行，Go 后端和 Vue 前端在宿主机上运行。两种运行方式的区别、安全设计、备份与恢复的详细步骤见 [docs/operations.md](docs/operations.md)。
 
 ## 目录结构
 
 ```
-compose.yaml            # 本地 PostgreSQL
+compose.yaml            # PostgreSQL；profile app 中还有 migrate、backend、web（Nginx）
 .env.example            # 环境变量示例（复制为 .env 使用）
 Makefile                # 常用命令，运行 make 查看
+.dockerignore           # 构建镜像时排除 .env、依赖和构建产物
+.github/workflows/      # CI（GitHub Actions）
 backend/                # Go 后端（Gin、GORM、log/slog）
+  Dockerfile            # 多阶段构建，运行镜像为 distroless、非 root
   cmd/server/           # 后端入口
   cmd/migrate/          # 数据库迁移命令
   migrations/           # 编号 SQL 迁移文件
@@ -28,18 +33,21 @@ backend/                # Go 后端（Gin、GORM、log/slog）
   internal/tz/          # Asia/Tokyo 日期与时刻
   internal/testdb/      # 集成测试用的临时数据库
 frontend/               # Vue 3 + TypeScript + Vite + vue-router
+  Dockerfile            # 构建静态文件，放入 Nginx 镜像
+  nginx.conf            # 静态文件、SPA 回退、/api 反向代理
   src/api/              # API 客户端（CSRF、错误处理）与接口类型
   src/pages/            # 登录、Profile、日历
   src/components/       # 行程和饮食记录表单
   src/lib/              # 日期（Asia/Tokyo）、餐次、错误文案
 docs/  plans/           # 项目文档与阶段计划
+backups/                # make db-backup 的输出（不提交）
 ```
 
 ## 前置依赖
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Docker（含 Compose v2） | Docker Desktop 或 Docker Engine | 运行 PostgreSQL |
+| Docker（含 Compose v2） | Docker Desktop 或 Docker Engine | 运行 PostgreSQL；容器方式运行整套服务；备份 |
 | Go | 1.26.2 及以上 | 后端、迁移 |
 | Node.js / npm | Node 24（见 `frontend/.nvmrc`） | 前端 |
 | openssl | 系统自带即可 | `make setup` 用它生成密钥 |
@@ -97,6 +105,8 @@ make dev
 | `make test-e2e` | 用无头 Chrome 测试整个 UI（使用临时数据库） |
 | `make setup` | 首次配置，见上文 |
 | `make db-stop` / `make db-down` | 停止数据库 / 删除容器（都会保留数据） |
+| `make app-up` / `make app-down` / `make app-logs` | 容器方式启动 / 停止 / 查看日志，见下文 |
+| `make db-backup` | 备份数据库，见「备份与恢复」 |
 
 - 运行 `make` 不带参数会列出全部命令。
 - `make dev` 中，后端或前端任何一个意外退出，另一个也会被停止，make 返回错误。
@@ -137,6 +147,21 @@ npm run dev
 
 开发服务器会把 `/api` 代理到 `API_PROXY_TARGET`（在根目录 `.env` 中设置，默认 `http://localhost:8080`）。
 
+### 容器方式（Docker + Nginx）
+
+完成「初次配置」后（容器方式只需要 Docker 和 `.env`），执行：
+
+```sh
+make app-up     # 构建镜像并启动，等所有服务 healthy 后返回
+```
+
+打开 **http://localhost:8000**。启动顺序是：数据库 → 迁移（`migrate` 容器执行完退出）→ 后端 → Nginx。
+
+- 只有 Nginx 映射到 `127.0.0.1:8000`（端口可用 `.env` 中的 `WEB_PORT` 修改），后端不映射端口，只能经过 Nginx 访问。
+- 与 `make dev` 共用同一个数据库容器和同一份数据，两者可以同时运行。
+- 改了代码之后要重新执行 `make app-up`，它会重新构建镜像。
+- `make app-logs` 查看所有容器的日志（Ctrl+C 退出查看，不会停止服务）。
+
 ## 停止
 
 - **后端、前端**：在各自的终端按 Ctrl+C。后端会停止接收新请求，等进行中的请求完成（最多 10 秒），关闭数据库连接池，然后退出。
@@ -149,6 +174,8 @@ npm run dev
   | `docker compose down -v` | 连同 volume 一起删除，**数据会永久丢失** |
 
   volume 不能代替备份。
+
+- **容器方式**：`make app-down` 删除全部容器（**包括数据库容器**），数据保留在 volume 中。之后要用 `make dev` 时会自动重新启动数据库；单独运行后端时先执行 `make db`。
 
 ## 测试与验证
 
@@ -163,6 +190,12 @@ make test-e2e           # 浏览器端到端测试，见下文
 - **端到端测试**（`make test-e2e`，脚本在 `e2e/`）：用无头 Chrome 走完整个流程，包括注册、Profile、日历的增删改查、刷新后数据仍在、退出、再登录。同时检查 CSRF 令牌轮换、请求带有 Origin、Ask AI 不发送请求。
   - 测试**自己创建、自己清理数据**：在 compose 的 PostgreSQL 上新建临时数据库 `mogumogu_e2e_*` 并执行迁移，后端和 Vite 用单独的端口（18080、15173）启动并连接这个库；无论测试成功、失败还是被 Ctrl+C 中断，都会停止进程并删除这个库。开发数据不会被读取或修改，运行中的 `make dev` 也不受影响。
   - 需要安装 Google Chrome 或 Chromium（macOS 上会自动找到；其他系统可以用 `CHROME=/path/to/chrome` 指定），Node 24 以上，不需要额外的 npm 包。
+
+### CI
+
+push 到 `dev`、`master`，以及向它们发 PR 时，GitHub Actions 会运行 4 个 job：密钥扫描（完整历史）、后端测试（带 PostgreSQL，集成测试真正执行）、前端构建与测试、两个镜像的构建。配置在 `.github/workflows/ci.yml`，说明见 [docs/operations.md](docs/operations.md#4-cigithub-actions)。
+
+推荐的流程：从 `dev` 建分支开发 → push 后向 `dev` 开 PR → CI 全部通过后再合并。
 
 ### 健康检查接口
 
@@ -205,6 +238,16 @@ curl -s -b "$J" "$B/api/meal-records?from=2026-10-01&to=2026-10-31"
 - 密钥一旦进入 Git 历史（包括已推送的提交），必须立即作废并更换。只删除文件或改写历史是不够的。
 - 本地的 `JWT_SECRET` 或 `CSRF_SECRET` 如果泄露（例如被贴到聊天里），用 `openssl rand -base64 48` 重新生成即可。旧的登录会话会全部失效。
 
+## 备份与恢复
+
+```sh
+make db-backup   # 写到 backups/mogumogu-<时间>.dump
+```
+
+- 备份里有个人资料和密码哈希。`backups/` 已被 `.gitignore` 忽略，文件只有本人可读，**不要提交或公开**。
+- 想要与当前数据完全一致的备份，先停止应用再备份。
+- 恢复演练（恢复到临时库检查，不影响开发库）和正式恢复（会覆盖数据，只能手动执行）的步骤见 [docs/operations.md](docs/operations.md#5-备份与恢复)。
+
 ## 常见问题
 
 - **后端启动时报 `JWT_SECRET must be at least 32 bytes`**：`.env` 里还是占位值，请按「初次配置」生成密钥。
@@ -213,4 +256,5 @@ curl -s -b "$J" "$B/api/meal-records?from=2026-10-01&to=2026-10-31"
 - **`docker compose up` 报端口被占用**：本机已有服务占用 5432，请修改 `.env` 中的 `DB_PORT`。
 - **后端停止时，Vite 终端出现 `http proxy error … ECONNREFUSED`**：这是正常现象，页面会显示「服务器暂时不可用」。
 - **`docker compose` 报 `required variable … is missing a value`**：`.env` 缺少对应变量，请参照 `.env.example` 补上。
+- **容器方式的后端启动失败，提示 `JWT_SECRET must be at least 32 bytes`，但 `.env` 没有问题**：shell 里可能已经导出了同名变量，compose 会优先使用它。请使用 `make app-up`（会先读取 `.env`）。容器方式的其他问题见 [docs/operations.md](docs/operations.md#6-常见问题)。
 - **`npm ci` / `npm install` 提示 `allow-scripts … fsevents`**：可以忽略。`fsevents` 是 Vite 在 macOS 上的可选依赖，已经自带编译好的二进制，不执行它的安装脚本也不影响安装、构建和运行。
