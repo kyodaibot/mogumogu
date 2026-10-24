@@ -35,7 +35,8 @@ func requestLogger(logger *slog.Logger) gin.HandlerFunc {
 }
 
 // resolveSession attaches the caller's session when the request carries a
-// valid, unrevoked session cookie. It never rejects a request by itself.
+// valid session cookie whose token is not revoked and whose user still
+// exists. It never rejects a request by itself; requireAuth does.
 func (a *api) resolveSession(c *gin.Context) {
 	token, err := c.Cookie(sessionCookie)
 	if err != nil || token == "" {
@@ -47,12 +48,12 @@ func (a *api) resolveSession(c *gin.Context) {
 		c.Next()
 		return
 	}
-	revoked, err := a.store.IsRevoked(c.Request.Context(), sess.JTI)
+	active, err := a.store.SessionActive(c.Request.Context(), sess.UserID, sess.JTI)
 	if err != nil {
 		abortInternal(c, a.logger, err)
 		return
 	}
-	if !revoked {
+	if active {
 		c.Set(ctxSession, sess)
 	}
 	c.Next()

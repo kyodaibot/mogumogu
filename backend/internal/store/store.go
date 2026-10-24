@@ -59,10 +59,16 @@ func (s *Store) RevokeToken(ctx context.Context, jti string, expiresAt time.Time
 		Create(&RevokedToken{JTI: jti, ExpiresAt: expiresAt}).Error
 }
 
-func (s *Store) IsRevoked(ctx context.Context, jti string) (bool, error) {
-	var n int64
-	err := s.db.WithContext(ctx).Model(&RevokedToken{}).Where("jti = ?", jti).Count(&n).Error
-	return n > 0, err
+// SessionActive reports whether a verified token may still be used: its user
+// still exists and its jti has not been revoked. One query per request.
+func (s *Store) SessionActive(ctx context.Context, userID int64, jti string) (bool, error) {
+	var active bool
+	err := s.db.WithContext(ctx).Raw(
+		`SELECT EXISTS (SELECT 1 FROM users WHERE id = ?)
+		    AND NOT EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = ?)`,
+		userID, jti,
+	).Scan(&active).Error
+	return active, err
 }
 
 // DeleteExpiredRevocations removes rows for tokens that have expired anyway.
