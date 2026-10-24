@@ -115,7 +115,7 @@
 
 - 算法 HS256，密钥来自环境变量 `JWT_SECRET`（至少 32 字节随机值）。
 - Claims：`sub`（用户 ID，字符串）、`iss`、`aud`、`iat`、`exp`、`jti`（随机唯一 ID）。
-- 每个请求校验：签名、`exp`、`iss`、`aud`、`sub` 与 `jti` 存在，且 `jti` 不在 `revoked_tokens` 中。任何一项失败返回 `401 unauthenticated`。
+- 每个请求校验：签名、`exp`、`iss`、`aud`、`sub` 与 `jti` 存在，`jti` 不在 `revoked_tokens` 中，且 `sub` 对应的用户仍然存在（用户被删除后，其未过期的令牌也立即失效）。任何一项失败返回 `401 unauthenticated`。
 - 用户身份**只**来自令牌；任何请求体或查询参数中的 `user_id` 都不被接受（未定义字段，返回 400）。
 
 ### 2.3 退出与撤销

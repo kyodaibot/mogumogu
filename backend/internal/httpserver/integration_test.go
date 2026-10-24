@@ -558,3 +558,49 @@ func TestIntegrationPersistence(t *testing.T) {
 		t.Fatalf("after reconnect: profile=%v meals=%v", p, meals.Items)
 	}
 }
+
+// TestIntegrationDeletedUserSession: once a user row is deleted, a session
+// cookie issued to that user is treated as logged out everywhere (401), not
+// only on /api/auth/me, and writes no longer fail with 500.
+func TestIntegrationDeletedUserSession(t *testing.T) {
+	db := testdb.New(t)
+	srv := newServer(t, db)
+	gone := signUp(t, srv, "to_be_deleted")
+	other := signUp(t, srv, "still_here")
+	gone.expect(201, "POST", "/api/schedule-events", map[string]any{"title": "x", "starts_at": "2026-10-23T09:00:00+09:00", "ends_at": "2026-10-23T10:00:00+09:00"})
+
+	var me meJSON
+	gone.expect(200, "GET", "/api/auth/me", nil).json(t, &me)
+	if _, err := db.SQL.Exec("DELETE FROM users WHERE id = $1", me.User.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/auth/me", nil},
+		{"GET", "/api/profile", nil},
+		{"GET", "/api/schedule-events?from=2026-10-23&to=2026-10-23", nil},
+		{"GET", "/api/meal-records?from=2026-10-23&to=2026-10-23", nil},
+		{"POST", "/api/schedule-events", map[string]any{"title": "x", "starts_at": "2026-10-23T09:00:00+09:00", "ends_at": "2026-10-23T10:00:00+09:00"}},
+		{"POST", "/api/meal-records", map[string]any{"date": "2026-10-23", "meal_type": "lunch", "content": "x"}},
+		{"PUT", "/api/profile", map[string]any{"height_cm": 170, "weight_kg": 60, "age": 20, "has_exercise_habit": true, "goal": "lose_fat"}},
+		{"POST", "/api/auth/logout", nil},
+	} {
+		if r := gone.do(tc.method, tc.path, tc.body); r.status != 401 || r.errCode(t) != "unauthenticated" {
+			t.Errorf("deleted user %s %s: %d %s", tc.method, tc.path, r.status, r.body)
+		}
+	}
+
+	// The cookie no longer counts as a session, so a fresh token is anonymous.
+	var c struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	gone.expect(200, "GET", "/api/auth/csrf", nil).json(t, &c)
+	if !strings.HasPrefix(c.CSRFToken, "v1.a.") {
+		t.Errorf("csrf token for a deleted user's cookie: %s", c.CSRFToken)
+	}
+	// Other users are unaffected.
+	other.expect(200, "GET", "/api/auth/me", nil)
+}
