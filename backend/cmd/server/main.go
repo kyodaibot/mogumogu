@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,6 +23,12 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	// `server healthcheck` is for container health checks: the distroless
+	// image has no shell or curl.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -51,6 +58,7 @@ func run(logger *slog.Logger) error {
 	}()
 	logger.Info("database pool configured", slog.Any("db", cfg.DB))
 	logger.Info("auth configured", slog.Any("auth", cfg.Auth))
+	logger.Info("client ip configured", slog.Any("trusted_proxies", cfg.TrustedProxies))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -67,6 +75,7 @@ func run(logger *slog.Logger) error {
 			RegisterLimiter: auth.NewLimiter(10, time.Hour),
 			AllowedOrigins:  cfg.Auth.AllowedOrigins,
 			CookieSecure:    cfg.Auth.CookieSecure,
+			TrustedProxies:  cfg.TrustedProxies,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -97,4 +106,26 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("http server stopped")
 	return nil
+}
+
+// healthcheck asks the running server's liveness endpoint and returns the
+// process exit code: 0 when it answers 200, 1 otherwise. It reads only
+// APP_PORT, so it needs none of the other settings.
+func healthcheck() int {
+	port := os.Getenv("APP_PORT")
+	if port == "" {
+		port = strconv.Itoa(config.DefaultAppPort)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", port) + "/api/health/live")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.StatusCode)
+		return 1
+	}
+	return 0
 }

@@ -171,7 +171,7 @@ LangGraph 工作流是单个 agent 的固定流程：
 - Go：认证与授权；Profile、行程和饮食记录的读写及日期范围查询；组装推荐上下文，调用内部 Python 服务，将结果返回前端。
 - Python：接收 Go 提供的结构化上下文和经过校验的对话历史，执行 LangGraph 流程、调用模型、校验并返回结构化结果。不查询用户业务表，不实现登录，不写入饮食记录。
 
-## 6. Python 与 uv 约定（阶段 5 落实）
+## 6. Python 与 uv 约定（阶段 4 落实）
 
 - 提交 pyproject.toml（项目配置、Python 兼容范围、依赖）、uv.lock 和 .python-version；不提交 .venv。
 - 运行依赖使用 uv add，开发依赖使用 uv add --dev；修改依赖时同步提交 pyproject.toml 和 uv.lock。
@@ -244,22 +244,24 @@ LangGraph 工作流是单个 agent 的固定流程：
 - 数据库备份与恢复演练。
 - 可复现的启动和维护文档。
 
-### 阶段 4：AWS 部署
+AI 功能（阶段 4）排在 AWS 部署（阶段 5）之前：AI 推荐是核心功能，先完成功能再上云，云上架构（含 Python 服务）只需设计一次。
 
-- EC2 运行应用容器，RDS PostgreSQL 保存业务数据，ECR 保存容器镜像。
+### 阶段 4a：首轮推荐
+
+实现第 3.6 节首轮推荐及第 4、6 节相关内容：uv 管理的 Python 服务、FastAPI 内部接口、LangGraph 工作流（不含 classify_message）、Ask AI 日期与餐次选择流程、三个推荐方案的展示、失败处理和重试入口。Python 服务加入 Compose 的容器运行方式，不映射端口，只供 Go 后端访问。
+
+### 阶段 4b：追问改进
+
+在 4a 可用后实现第 3.6 节追问改进及第 4 节追问约定：追问输入框、前端对话历史、Go 端历史校验与轮数和长度限制、追问限流、classify_message 节点。
+
+### 阶段 5：AWS 部署
+
+- EC2 运行应用容器（含 Python AI 服务），RDS PostgreSQL 保存业务数据，ECR 保存容器镜像。
 - 必要的 VPC、Security Groups 和 IAM 配置；HTTPS 访问。
 - Terraform 管理云资源。
 - 逐步加入自动部署、CloudWatch、备份和回滚流程。
 
 先运行一套演示环境，接受单台应用服务器的可用性限制。
-
-### 阶段 5a：首轮推荐
-
-实现第 3.6 节首轮推荐及第 4、6 节相关内容：uv 管理的 Python 服务、FastAPI 内部接口、LangGraph 工作流（不含 classify_message）、Ask AI 日期与餐次选择流程、三个推荐方案的展示、失败处理和重试入口。
-
-### 阶段 5b：追问改进
-
-在 5a 可用后实现第 3.6 节追问改进及第 4 节追问约定：追问输入框、前端对话历史、Go 端历史校验与轮数和长度限制、追问限流、classify_message 节点。
 
 ## 10. 最终 MVP 暂不包含
 

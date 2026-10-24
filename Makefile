@@ -10,7 +10,7 @@ BACKEND_BIN := backend/bin/server
 WITH_ENV := set -a; . ./.env; set +a;
 
 .PHONY: help setup check-env db db-stop db-down migrate-up migrate-down migrate-version migrate-create \
-	backend backend-build frontend dev test test-integration test-e2e
+	backend backend-build frontend dev test test-integration test-e2e app-up app-down app-logs
 
 help:
 	@echo "Usage: make <target>"
@@ -29,6 +29,10 @@ help:
 	@echo "  migrate-create    Add an empty migration pair: make migrate-create name=add_something"
 	@echo "  db-stop           Stop the database container (data kept)"
 	@echo "  db-down           Remove the database container (data kept in the pgdata volume)"
+	@echo ""
+	@echo "  app-up            Build images and start everything in containers: http://localhost:8000"
+	@echo "  app-down          Stop and remove all containers, including the database (data kept)"
+	@echo "  app-logs          Follow the logs of all containers (Ctrl+C stops following)"
 	@echo ""
 	@echo "Deleting data is deliberately not a target: run 'docker compose down -v' yourself."
 
@@ -111,6 +115,21 @@ test-integration: check-env db
 # Creates and drops its own mogumogu_e2e_* database; see e2e/run.sh.
 test-e2e: check-env db backend-build frontend/node_modules
 	./e2e/run.sh
+
+# Container setup (compose profile `app`): database, migrations, backend and
+# Nginx. It shares the postgres container and data with `make dev`.
+# .env is sourced first because compose prefers variables already set in your
+# shell over .env, and a JWT_SECRET exported for another project would win.
+# --wait returns once every service is healthy or has exited successfully.
+app-up: check-env
+	@$(WITH_ENV) docker compose --profile app up -d --build --wait
+
+# Stops the database too; the pgdata volume is kept.
+app-down: check-env
+	@$(WITH_ENV) docker compose --profile app down
+
+app-logs: check-env
+	@$(WITH_ENV) docker compose --profile app logs -f
 
 frontend/node_modules: frontend/package-lock.json
 	cd frontend && npm ci
