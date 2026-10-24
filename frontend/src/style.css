@@ -1,0 +1,191 @@
+:root {
+  --text: #1f2328;
+  --bg: #ffffff;
+  --border: #d0d7de;
+  --muted: #6e7781;
+  --accent: #0969da;
+  --ok: #1a7f37;
+  --bad: #cf222e;
+  --info-bg: #ddf4ff;
+  --ok-bg: #dafbe1;
+  --bad-bg: #ffebe9;
+  --event-bg: #ddf4ff;
+  --meal-bg: #fff1e5;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans', sans-serif;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6edf3;
+    --bg: #0d1117;
+    --border: #30363d;
+    --muted: #8b949e;
+    --accent: #4493f8;
+    --ok: #3fb950;
+    --bad: #f85149;
+    --info-bg: #0c2d6b;
+    --ok-bg: #033a16;
+    --bad-bg: #490202;
+    --event-bg: #0c2d6b;
+    --meal-bg: #4b2900;
+  }
+}
+
+body {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.4rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.link {
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+}
+
+button.link.danger {
+  color: var(--bad);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+input[type='radio'] {
+  width: auto;
+}
+
+.page {
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+}
+
+.page.narrow {
+  max-width: 32rem;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.form.compact {
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.form h1,
+.form h3 {
+  margin: 0;
+}
+
+.form label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.form label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-right: 1rem;
+}
+
+.form fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.form legend {
+  margin-bottom: 0.25rem;
+}
+
+.form .row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
+.form .actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hint,
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.field-error {
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+
+.banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+.banner.error {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.banner.success {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.banner.info {
+  background: var(--info-bg);
+}
+
+.banner button {
+  margin-left: 0.5rem;
+}
