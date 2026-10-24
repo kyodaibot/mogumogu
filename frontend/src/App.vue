@@ -1,164 +1,78 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { session } from './session'
+import { errorMessage } from './lib/messages'
 
-// Development status page: shows backend liveness and database readiness.
-// It will be replaced by the real pages in phase 2.
+const router = useRouter()
+const loggingOut = ref(false)
+const logoutError = ref('')
 
-type CheckState =
-  | { kind: 'loading' }
-  | { kind: 'ok' }
-  | { kind: 'down'; httpStatus: number }
-  | { kind: 'error'; message: string }
-
-interface Check {
-  label: string
-  endpoint: string
-  okText: string
-  downText: string
-  state: CheckState
-}
-
-const REQUEST_TIMEOUT_MS = 5000
-
-const checks = reactive<Check[]>([
-  {
-    label: '后端',
-    endpoint: '/api/health/live',
-    okText: '正常',
-    downText: '异常',
-    state: { kind: 'loading' },
-  },
-  {
-    label: '数据库',
-    endpoint: '/api/health/ready',
-    okText: '正常',
-    downText: '不可用',
-    state: { kind: 'loading' },
-  },
-])
-
-const checkedAt = ref<Date | null>(null)
-const refreshing = ref(false)
-
-async function runCheck(endpoint: string): Promise<CheckState> {
+async function logout() {
+  loggingOut.value = true
+  logoutError.value = ''
   try {
-    const res = await fetch(endpoint, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (res.ok) return { kind: 'ok' }
-    // 503 is the backend's own "not ready" answer. Anything else (for example
-    // the 5xx the Vite proxy returns when the backend is down) is a failure
-    // to get an answer at all.
-    if (res.status === 503) return { kind: 'down', httpStatus: res.status }
-    return { kind: 'error', message: `请求失败（HTTP ${res.status}）` }
+    await session.logout()
+    await router.push('/login')
   } catch (err) {
-    const timedOut = err instanceof DOMException && err.name === 'TimeoutError'
-    return { kind: 'error', message: timedOut ? '请求超时' : '请求失败（无法连接）' }
+    logoutError.value = errorMessage(err)
+  } finally {
+    loggingOut.value = false
   }
 }
-
-async function refresh() {
-  refreshing.value = true
-  for (const check of checks) check.state = { kind: 'loading' }
-
-  await Promise.all(
-    checks.map(async (check) => {
-      check.state = await runCheck(check.endpoint)
-    }),
-  )
-
-  checkedAt.value = new Date()
-  refreshing.value = false
-}
-
-function statusText(check: Check): string {
-  switch (check.state.kind) {
-    case 'loading':
-      return '检查中…'
-    case 'ok':
-      return check.okText
-    case 'down':
-      return `${check.downText}（HTTP ${check.state.httpStatus}）`
-    case 'error':
-      return check.state.message
-  }
-}
-
-onMounted(refresh)
 </script>
 
 <template>
-  <main>
-    <h1>mogumogu 开发状态</h1>
-
-    <ul class="checks">
-      <li v-for="check in checks" :key="check.endpoint" :class="['check', check.state.kind]">
-        <span class="label">{{ check.label }}</span>
-        <span class="status" role="status">{{ statusText(check) }}</span>
-        <code class="endpoint">{{ check.endpoint }}</code>
-      </li>
-    </ul>
-
-    <div class="actions">
-      <button type="button" :disabled="refreshing" @click="refresh">
-        {{ refreshing ? '刷新中…' : '刷新' }}
+  <header class="app-header">
+    <RouterLink to="/" class="brand">mogumogu</RouterLink>
+    <nav v-if="session.state.user">
+      <RouterLink v-if="session.state.hasProfile" to="/">日历</RouterLink>
+      <RouterLink to="/profile">Profile</RouterLink>
+      <span class="username">{{ session.state.user.username }}</span>
+      <button type="button" class="link" :disabled="loggingOut" @click="logout">
+        {{ loggingOut ? '退出中…' : '退出' }}
       </button>
-      <span v-if="checkedAt" class="checked-at">
-        上次检查：{{ checkedAt.toLocaleTimeString() }}
-      </span>
-    </div>
-  </main>
+    </nav>
+  </header>
+  <p v-if="logoutError" class="banner error" role="alert">{{ logoutError }}</p>
+  <RouterView />
 </template>
 
 <style scoped>
-main {
-  max-width: 32rem;
-  margin: 3rem auto;
-  padding: 0 1rem;
-}
-
-.checks {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 0.75rem;
-}
-
-.check {
-  display: grid;
-  grid-template-columns: 5rem 1fr;
-  gap: 0.25rem 1rem;
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--border);
-  border-left-width: 6px;
-  border-radius: 6px;
+  border-bottom: 1px solid var(--border);
 }
 
-.check.loading { border-left-color: var(--muted); }
-.check.ok { border-left-color: var(--ok); }
-.check.down,
-.check.error { border-left-color: var(--bad); }
-
-.label { font-weight: 600; }
-.check.ok .status { color: var(--ok); }
-.check.down .status,
-.check.error .status { color: var(--bad); }
-
-.endpoint {
-  grid-column: 2;
-  font-size: 0.8rem;
-  color: var(--muted);
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: inherit;
+  text-decoration: none;
 }
 
-.actions {
+nav {
   display: flex;
   align-items: center;
   gap: 1rem;
 }
 
-.checked-at {
-  font-size: 0.85rem;
+nav a {
+  color: inherit;
+  text-decoration: none;
+}
+
+nav a.router-link-exact-active {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.username {
   color: var(--muted);
+  font-size: 0.9rem;
 }
 </style>

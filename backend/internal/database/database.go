@@ -20,9 +20,16 @@ import (
 // down at startup is reported by readiness instead of failing the process;
 // database/sql reconnects on its own once the database is back.
 func Open(cfg config.DBConfig) (*gorm.DB, *sql.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn(cfg)), &gorm.Config{
+	return OpenURL(dsn(cfg))
+}
+
+// OpenURL is Open for a postgres:// URL (used by integration tests).
+func OpenURL(postgresURL string) (*gorm.DB, *sql.DB, error) {
+	db, err := gorm.Open(postgres.Open(postgresURL), &gorm.Config{
 		DisableAutomaticPing: true,
 		Logger:               logger.Discard,
+		// Map unique-constraint violations to gorm.ErrDuplicatedKey and so on.
+		TranslateError: true,
 	})
 	if err != nil {
 		// Driver errors can echo the connection string, so keep them out.

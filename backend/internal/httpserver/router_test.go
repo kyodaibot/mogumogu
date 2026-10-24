@@ -50,7 +50,7 @@ func TestLiveDoesNotTouchDatabase(t *testing.T) {
 		t.Error("live must not ping the database")
 		return nil
 	}}
-	w := get(t, NewRouter(discardLogger(), db), "/api/health/live")
+	w := get(t, NewRouter(Deps{Logger: discardLogger(), DB: db}), "/api/health/live")
 
 	if w.Code != http.StatusOK || statusField(t, w) != "ok" {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
@@ -96,7 +96,7 @@ func TestReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := get(t, NewRouter(discardLogger(), fakePinger{ping: tt.ping}), "/api/health/ready")
+			w := get(t, NewRouter(Deps{Logger: discardLogger(), DB: fakePinger{ping: tt.ping}}), "/api/health/ready")
 
 			if w.Code != tt.wantCode || statusField(t, w) != tt.wantStatus {
 				t.Fatalf("got %d %s, want %d %q", w.Code, w.Body.String(), tt.wantCode, tt.wantStatus)
@@ -110,7 +110,7 @@ func TestReady(t *testing.T) {
 
 func TestRequestLogger(t *testing.T) {
 	var buf bytes.Buffer
-	r := NewRouter(slog.New(slog.NewJSONHandler(&buf, nil)), pingOK())
+	r := NewRouter(Deps{Logger: slog.New(slog.NewJSONHandler(&buf, nil)), DB: pingOK()})
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/health/live?token=secret", nil))

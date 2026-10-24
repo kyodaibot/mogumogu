@@ -4,15 +4,21 @@ package config
 import (
 	"errors"
 	"log/slog"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	defaultAppPort = 8080
-	defaultSSLMode = "disable"
+	defaultAppPort     = 8080
+	defaultSSLMode     = "disable"
+	defaultJWTTTL      = 7 * 24 * time.Hour
+	defaultJWTIssuer   = "mogumogu"
+	defaultJWTAudience = "mogumogu-web"
+	minSecretBytes     = 32
 )
 
 var validSSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
@@ -20,6 +26,7 @@ var validSSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca
 type Config struct {
 	AppPort int
 	DB      DBConfig
+	Auth    AuthConfig
 }
 
 type DBConfig struct {
@@ -29,6 +36,16 @@ type DBConfig struct {
 	Password string
 	Name     string
 	SSLMode  string
+}
+
+type AuthConfig struct {
+	JWTSecret      []byte
+	JWTTTL         time.Duration
+	JWTIssuer      string
+	JWTAudience    string
+	CSRFSecret     []byte
+	AllowedOrigins []string
+	CookieSecure   bool
 }
 
 // LogValue keeps the password out of logs if the struct is ever logged.
@@ -42,67 +59,181 @@ func (c DBConfig) LogValue() slog.Value {
 	)
 }
 
-// FromEnv loads the configuration from the process environment.
+// LogValue keeps both secrets out of logs if the struct is ever logged.
+func (c AuthConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Duration("jwt_ttl", c.JWTTTL),
+		slog.String("jwt_issuer", c.JWTIssuer),
+		slog.String("jwt_audience", c.JWTAudience),
+		slog.Any("allowed_origins", c.AllowedOrigins),
+		slog.Bool("cookie_secure", c.CookieSecure),
+	)
+}
+
+// FromEnv loads the full server configuration from the process environment.
 func FromEnv() (Config, error) {
 	return Load(os.LookupEnv)
+}
+
+// DBFromEnv loads only the database settings, for tools such as migrate.
+func DBFromEnv() (DBConfig, error) {
+	return LoadDB(os.LookupEnv)
 }
 
 // Load builds a Config using lookup to read variables. All problems are
 // reported together. Error messages name variables but never include values.
 func Load(lookup func(string) (string, bool)) (Config, error) {
-	get := func(key string) string {
-		v, _ := lookup(key)
-		return strings.TrimSpace(v)
-	}
-
-	var missing []string
-	var problems []string
-
-	required := func(key string) string {
-		v := get(key)
-		if v == "" {
-			missing = append(missing, key)
-		}
-		return v
-	}
-	port := func(key, raw string) int {
-		if raw == "" {
-			return 0
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 65535 {
-			problems = append(problems, key+" must be an integer between 1 and 65535")
-			return 0
-		}
-		return n
-	}
-
+	r := newReader(lookup)
 	cfg := Config{
-		AppPort: defaultAppPort,
-		DB: DBConfig{
-			Host:     required("DB_HOST"),
-			User:     required("DB_USER"),
-			Password: required("DB_PASSWORD"),
-			Name:     required("DB_NAME"),
-			SSLMode:  defaultSSLMode,
-		},
+		AppPort: r.port("APP_PORT", false, defaultAppPort),
+		DB:      r.db(),
+		Auth:    r.auth(),
 	}
-	cfg.DB.Port = port("DB_PORT", required("DB_PORT"))
-	if raw := get("APP_PORT"); raw != "" {
-		cfg.AppPort = port("APP_PORT", raw)
-	}
-	if mode := get("DB_SSLMODE"); mode != "" {
-		cfg.DB.SSLMode = mode
-		if !slices.Contains(validSSLModes, mode) {
-			problems = append(problems, "DB_SSLMODE must be one of: "+strings.Join(validSSLModes, ", "))
-		}
-	}
-
-	if len(missing) > 0 {
-		problems = append([]string{"missing required environment variables: " + strings.Join(missing, ", ")}, problems...)
-	}
-	if len(problems) > 0 {
-		return Config{}, errors.New("invalid configuration: " + strings.Join(problems, "; "))
+	if err := r.err(); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// LoadDB is Load restricted to the DB_* variables.
+func LoadDB(lookup func(string) (string, bool)) (DBConfig, error) {
+	r := newReader(lookup)
+	db := r.db()
+	if err := r.err(); err != nil {
+		return DBConfig{}, err
+	}
+	return db, nil
+}
+
+type reader struct {
+	lookup   func(string) (string, bool)
+	missing  []string
+	problems []string
+}
+
+func newReader(lookup func(string) (string, bool)) *reader {
+	return &reader{lookup: lookup}
+}
+
+func (r *reader) get(key string) string {
+	v, _ := r.lookup(key)
+	return strings.TrimSpace(v)
+}
+
+func (r *reader) required(key string) string {
+	v := r.get(key)
+	if v == "" {
+		r.missing = append(r.missing, key)
+	}
+	return v
+}
+
+func (r *reader) port(key string, required bool, def int) int {
+	raw := r.get(key)
+	if raw == "" {
+		if required {
+			r.missing = append(r.missing, key)
+		}
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		r.problems = append(r.problems, key+" must be an integer between 1 and 65535")
+		return 0
+	}
+	return n
+}
+
+func (r *reader) db() DBConfig {
+	db := DBConfig{
+		Host:     r.required("DB_HOST"),
+		Port:     r.port("DB_PORT", true, 0),
+		User:     r.required("DB_USER"),
+		Password: r.required("DB_PASSWORD"),
+		Name:     r.required("DB_NAME"),
+		SSLMode:  defaultSSLMode,
+	}
+	if mode := r.get("DB_SSLMODE"); mode != "" {
+		db.SSLMode = mode
+		if !slices.Contains(validSSLModes, mode) {
+			r.problems = append(r.problems, "DB_SSLMODE must be one of: "+strings.Join(validSSLModes, ", "))
+		}
+	}
+	return db
+}
+
+func (r *reader) auth() AuthConfig {
+	a := AuthConfig{
+		JWTSecret:   r.secret("JWT_SECRET"),
+		JWTTTL:      defaultJWTTTL,
+		JWTIssuer:   defaultJWTIssuer,
+		JWTAudience: defaultJWTAudience,
+		CSRFSecret:  r.secret("CSRF_SECRET"),
+	}
+	if a.JWTSecret != nil && a.CSRFSecret != nil && string(a.JWTSecret) == string(a.CSRFSecret) {
+		r.problems = append(r.problems, "CSRF_SECRET must differ from JWT_SECRET")
+	}
+	if raw := r.get("JWT_TTL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Minute {
+			r.problems = append(r.problems, "JWT_TTL must be a duration of at least 1m, such as 168h")
+		} else {
+			a.JWTTTL = d
+		}
+	}
+	if v := r.get("JWT_ISSUER"); v != "" {
+		a.JWTIssuer = v
+	}
+	if v := r.get("JWT_AUDIENCE"); v != "" {
+		a.JWTAudience = v
+	}
+	if raw := r.required("ALLOWED_ORIGINS"); raw != "" {
+		for o := range strings.SplitSeq(raw, ",") {
+			o = strings.TrimSpace(o)
+			if !isOrigin(o) {
+				r.problems = append(r.problems, "ALLOWED_ORIGINS must be a comma-separated list of origins such as http://localhost:5173")
+				break
+			}
+			a.AllowedOrigins = append(a.AllowedOrigins, o)
+		}
+	}
+	if raw := r.get("COOKIE_SECURE"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			r.problems = append(r.problems, "COOKIE_SECURE must be true or false")
+		}
+		a.CookieSecure = b
+	}
+	return a
+}
+
+func (r *reader) secret(key string) []byte {
+	v := r.required(key)
+	if v == "" {
+		return nil
+	}
+	if len(v) < minSecretBytes {
+		r.problems = append(r.problems, key+" must be at least 32 bytes")
+		return nil
+	}
+	return []byte(v)
+}
+
+func (r *reader) err() error {
+	problems := r.problems
+	if len(r.missing) > 0 {
+		problems = append([]string{"missing required environment variables: " + strings.Join(r.missing, ", ")}, problems...)
+	}
+	if len(problems) > 0 {
+		return errors.New("invalid configuration: " + strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// isOrigin accepts scheme://host[:port] with no path, query or trailing slash,
+// which is exactly what browsers send in the Origin header.
+func isOrigin(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" &&
+		u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
 }

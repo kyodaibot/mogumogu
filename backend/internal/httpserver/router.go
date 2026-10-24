@@ -1,4 +1,5 @@
-// Package httpserver wires HTTP routes and middleware.
+// Package httpserver wires HTTP routes, middleware and handlers. The API
+// contract is docs/api.md.
 package httpserver
 
 import (
@@ -8,6 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"mogumogu/backend/internal/auth"
+	"mogumogu/backend/internal/store"
 )
 
 const readyTimeout = 2 * time.Second
@@ -17,19 +21,78 @@ type Pinger interface {
 	PingContext(ctx context.Context) error
 }
 
+// Deps are the router's collaborators. Health checks only need Logger and DB.
+type Deps struct {
+	Logger          *slog.Logger
+	DB              Pinger
+	Store           *store.Store
+	Sessions        *auth.Sessions
+	CSRF            *auth.CSRF
+	LoginLimiter    *auth.Limiter
+	RegisterLimiter *auth.Limiter
+	AllowedOrigins  []string
+	CookieSecure    bool
+}
+
+type api struct {
+	logger          *slog.Logger
+	store           *store.Store
+	sessions        *auth.Sessions
+	csrf            *auth.CSRF
+	loginLimiter    *auth.Limiter
+	registerLimiter *auth.Limiter
+	allowedOrigins  []string
+	cookieSecure    bool
+}
+
 func init() {
 	// Release mode stops Gin from printing non-JSON debug lines to stdout.
 	gin.SetMode(gin.ReleaseMode)
 }
 
 // NewRouter returns the Gin engine with all routes registered.
-func NewRouter(logger *slog.Logger, db Pinger) *gin.Engine {
+func NewRouter(d Deps) *gin.Engine {
 	r := gin.New()
-	r.Use(requestLogger(logger), gin.Recovery())
+	// No proxy is trusted yet, so ClientIP is always the TCP peer and clients
+	// cannot spoof X-Forwarded-For to dodge rate limits. Phase 3 configures Nginx.
+	_ = r.SetTrustedProxies(nil)
+	r.Use(requestLogger(d.Logger), gin.Recovery())
 
 	health := r.Group("/api/health")
 	health.GET("/live", live)
-	health.GET("/ready", ready(logger, db))
+	health.GET("/ready", ready(d.Logger, d.DB))
+
+	a := &api{
+		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
+		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter,
+		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
+	}
+	app := r.Group("/api", a.resolveSession)
+
+	public := app.Group("", a.csrfProtect)
+	public.GET("/auth/csrf", a.getCSRF)
+	public.POST("/auth/register", a.register)
+	public.POST("/auth/login", a.login)
+
+	// Authenticate first (401) so CSRF can then check the session binding (403).
+	private := app.Group("", a.requireAuth, a.csrfProtect)
+	private.POST("/auth/logout", a.logout)
+	private.GET("/auth/me", a.me)
+
+	private.GET("/profile", a.getProfile)
+	private.PUT("/profile", a.putProfile)
+
+	private.GET("/schedule-events", a.listEvents)
+	private.POST("/schedule-events", a.createEvent)
+	private.GET("/schedule-events/:id", a.getEvent)
+	private.PUT("/schedule-events/:id", a.updateEvent)
+	private.DELETE("/schedule-events/:id", a.deleteEvent)
+
+	private.GET("/meal-records", a.listMeals)
+	private.POST("/meal-records", a.createMeal)
+	private.GET("/meal-records/:id", a.getMeal)
+	private.PUT("/meal-records/:id", a.updateMeal)
+	private.DELETE("/meal-records/:id", a.deleteMeal)
 
 	return r
 }
@@ -51,20 +114,5 @@ func ready(logger *slog.Logger, db Pinger) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	}
-}
-
-// requestLogger logs one line per request. Only the path is logged, not the
-// query string, so query parameters never reach the logs.
-func requestLogger(logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-		logger.Info("request",
-			slog.String("method", c.Request.Method),
-			slog.String("path", c.Request.URL.Path),
-			slog.Int("status", c.Writer.Status()),
-			slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
-		)
 	}
 }
