@@ -3,7 +3,7 @@
 > 状态：**设计已确认（2026-10-23）**，见文末「设计决定」。实现中如需修改接口，先改本文件并经确认，再改代码。
 >
 > 本文件定义前端与 Go 后端之间的 HTTP 接口。业务背景见 [project-review.md](project-review.md)，阶段范围见 [plans/phase-2.md](../plans/phase-2.md)。
-> Go 与 Python AI 服务之间的内部接口在阶段 5 另行约定，不在本文件中。
+> Go 与 Python AI 服务之间的内部接口在阶段 4 另行约定，不在本文件中。
 
 ## 1. 通用约定
 
@@ -411,7 +411,7 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 ## 9. 后续阶段预留（本阶段不实现）
 
-- `POST /api/recommendations`：Ask AI 首轮推荐与追问（阶段 5a/5b）。路径和格式在阶段 5 另行约定。
+- `POST /api/recommendations`：Ask AI 首轮推荐与追问（阶段 4a/4b）。路径和格式在阶段 4 另行约定。
 - 阶段 2 中前端的 Ask AI 入口为禁用状态，不调用任何接口。
 
 ## 10. 设计决定

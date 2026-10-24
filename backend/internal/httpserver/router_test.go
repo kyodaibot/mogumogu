@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func discardLogger() *slog.Logger {
@@ -127,5 +129,73 @@ func TestRequestLogger(t *testing.T) {
 	}
 	if bytes.Contains(buf.Bytes(), []byte("secret")) {
 		t.Fatal("query string leaked into the request log")
+	}
+}
+
+func TestUnknownPathIsJSON404(t *testing.T) {
+	w := get(t, NewRouter(Deps{Logger: discardLogger(), DB: pingOK()}), "/api/no-such-thing")
+
+	var body struct {
+		Error errorBody `json:"error"`
+	}
+	if w.Code != http.StatusNotFound || json.Unmarshal(w.Body.Bytes(), &body) != nil || body.Error.Code != "not_found" {
+		t.Fatalf("got %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	tests := []struct {
+		name    string
+		trusted []string
+		peer    string
+		headers map[string]string
+		want    string
+	}{
+		{
+			name:    "no trusted proxies ignores X-Forwarded-For",
+			peer:    "172.18.0.5:40000",
+			headers: map[string]string{"X-Forwarded-For": "203.0.113.7"},
+			want:    "172.18.0.5",
+		},
+		{
+			name:    "trusted proxy forwards the client address",
+			trusted: privateRanges,
+			peer:    "172.18.0.5:40000",
+			headers: map[string]string{"X-Forwarded-For": "203.0.113.7"},
+			want:    "203.0.113.7",
+		},
+		{
+			name:    "untrusted peer cannot spoof X-Forwarded-For",
+			trusted: privateRanges,
+			peer:    "203.0.113.9:40000",
+			headers: map[string]string{"X-Forwarded-For": "198.51.100.1"},
+			want:    "203.0.113.9",
+		},
+		{
+			name:    "X-Real-IP is never read",
+			trusted: privateRanges,
+			peer:    "172.18.0.5:40000",
+			headers: map[string]string{"X-Real-IP": "198.51.100.1"},
+			want:    "172.18.0.5",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRouter(Deps{Logger: discardLogger(), DB: pingOK(), TrustedProxies: tt.trusted})
+			r.GET("/test/ip", func(c *gin.Context) { c.String(http.StatusOK, c.ClientIP()) })
+
+			req := httptest.NewRequest(http.MethodGet, "/test/ip", nil)
+			req.RemoteAddr = tt.peer
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if got := w.Body.String(); got != tt.want {
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

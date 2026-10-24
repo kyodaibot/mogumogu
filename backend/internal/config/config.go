@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	defaultAppPort     = 8080
+	DefaultAppPort     = 8080
 	defaultSSLMode     = "disable"
 	defaultJWTTTL      = 7 * 24 * time.Hour
 	defaultJWTIssuer   = "mogumogu"
@@ -27,6 +28,9 @@ type Config struct {
 	AppPort int
 	DB      DBConfig
 	Auth    AuthConfig
+	// TrustedProxies lists the IPs or CIDR ranges whose X-Forwarded-For header
+	// is believed. Empty (the default) means the TCP peer is the client.
+	TrustedProxies []string
 }
 
 type DBConfig struct {
@@ -85,9 +89,10 @@ func DBFromEnv() (DBConfig, error) {
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	r := newReader(lookup)
 	cfg := Config{
-		AppPort: r.port("APP_PORT", false, defaultAppPort),
-		DB:      r.db(),
-		Auth:    r.auth(),
+		AppPort:        r.port("APP_PORT", false, DefaultAppPort),
+		DB:             r.db(),
+		Auth:           r.auth(),
+		TrustedProxies: r.trustedProxies(),
 	}
 	if err := r.err(); err != nil {
 		return Config{}, err
@@ -205,6 +210,28 @@ func (r *reader) auth() AuthConfig {
 		a.CookieSecure = b
 	}
 	return a
+}
+
+// trustedProxies reads TRUSTED_PROXIES, a comma-separated list of IPs or CIDR
+// ranges such as 172.16.0.0/12. Only set it when the backend is reachable
+// solely through a proxy that overwrites X-Forwarded-For.
+func (r *reader) trustedProxies() []string {
+	raw := r.get("TRUSTED_PROXIES")
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for p := range strings.SplitSeq(raw, ",") {
+		p = strings.TrimSpace(p)
+		if _, err := netip.ParsePrefix(p); err != nil {
+			if _, err := netip.ParseAddr(p); err != nil {
+				r.problems = append(r.problems, "TRUSTED_PROXIES must be a comma-separated list of IPs or CIDR ranges such as 172.16.0.0/12")
+				return nil
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (r *reader) secret(key string) []byte {

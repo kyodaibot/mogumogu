@@ -1,0 +1,13 @@
+# Both images are built with the repo root as context (docker build -f
+# backend/Dockerfile .). Keep secrets, dependencies and build output out of it.
+.env
+.env.*
+.git
+backups
+**/node_modules
+**/dist
+**/bin
+**/*.tsbuildinfo
+.claude
+CLAUDE.local.md
+.mcp.json

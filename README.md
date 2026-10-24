@@ -8,7 +8,7 @@
 - 可以在日历上记录行程和饮食。
 - 数据保存在 PostgreSQL 中，并按用户隔离。
 
-AI 推荐（Ask AI）要到阶段 5 才实现，目前只显示为禁用的按钮。PostgreSQL 在 Docker Compose 中运行，Go 后端和 Vue 前端都在宿主机上运行。
+AI 推荐（Ask AI）要到阶段 4 才实现，目前只显示为禁用的按钮。PostgreSQL 在 Docker Compose 中运行，Go 后端和 Vue 前端都在宿主机上运行。
 
 ## 目录结构
 

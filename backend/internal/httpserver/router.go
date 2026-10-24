@@ -32,6 +32,9 @@ type Deps struct {
 	RegisterLimiter *auth.Limiter
 	AllowedOrigins  []string
 	CookieSecure    bool
+	// TrustedProxies are the peers whose X-Forwarded-For is believed (see
+	// config.Config). Nil means ClientIP is always the TCP peer.
+	TrustedProxies []string
 }
 
 type api struct {
@@ -53,10 +56,17 @@ func init() {
 // NewRouter returns the Gin engine with all routes registered.
 func NewRouter(d Deps) *gin.Engine {
 	r := gin.New()
-	// No proxy is trusted yet, so ClientIP is always the TCP peer and clients
-	// cannot spoof X-Forwarded-For to dodge rate limits. Phase 3 configures Nginx.
-	_ = r.SetTrustedProxies(nil)
+	// ClientIP keys the rate limits. It reads X-Forwarded-For only when the TCP
+	// peer is a trusted proxy (Nginx, which overwrites the header with the real
+	// client address); otherwise it is the TCP peer, so clients cannot spoof it.
+	// X-Real-IP is never read.
+	r.RemoteIPHeaders = []string{"X-Forwarded-For"}
+	if err := r.SetTrustedProxies(d.TrustedProxies); err != nil {
+		panic("invalid trusted proxies (config validates them): " + err.Error())
+	}
 	r.Use(requestLogger(d.Logger), gin.Recovery())
+	// Unknown paths get the same JSON error as missing resources.
+	r.NoRoute(abortNotFound)
 
 	health := r.Group("/api/health")
 	health.GET("/live", live)

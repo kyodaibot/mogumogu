@@ -56,6 +56,9 @@ func TestLoadValidWithDefaults(t *testing.T) {
 	if len(a.AllowedOrigins) != 1 || a.AllowedOrigins[0] != "http://localhost:5173" {
 		t.Fatalf("allowed origins = %v", a.AllowedOrigins)
 	}
+	if cfg.TrustedProxies != nil {
+		t.Fatalf("trusted proxies = %v, want none by default", cfg.TrustedProxies)
+	}
 }
 
 func TestLoadOverridesDefaults(t *testing.T) {
@@ -67,6 +70,7 @@ func TestLoadOverridesDefaults(t *testing.T) {
 	env["JWT_AUDIENCE"] = "aud"
 	env["ALLOWED_ORIGINS"] = "http://localhost:5173, https://app.example.com"
 	env["COOKIE_SECURE"] = "true"
+	env["TRUSTED_PROXIES"] = "10.0.0.0/8, 172.16.0.0/12,192.0.2.10"
 
 	cfg, err := Load(lookupFrom(env))
 	if err != nil {
@@ -77,6 +81,9 @@ func TestLoadOverridesDefaults(t *testing.T) {
 		a.JWTIssuer != "iss" || a.JWTAudience != "aud" || !a.CookieSecure ||
 		len(a.AllowedOrigins) != 2 || a.AllowedOrigins[1] != "https://app.example.com" {
 		t.Fatalf("overrides not applied: port=%d db=%+v auth=%+v", cfg.AppPort, cfg.DB.LogValue(), a.LogValue())
+	}
+	if p := cfg.TrustedProxies; len(p) != 3 || p[0] != "10.0.0.0/8" || p[1] != "172.16.0.0/12" || p[2] != "192.0.2.10" {
+		t.Fatalf("trusted proxies = %v", p)
 	}
 }
 
@@ -139,6 +146,11 @@ func TestLoadErrors(t *testing.T) {
 			name:    "origin with path",
 			modify:  func(env map[string]string) { env["ALLOWED_ORIGINS"] = "http://localhost:5173/" },
 			wantErr: []string{"ALLOWED_ORIGINS must be"},
+		},
+		{
+			name:    "invalid trusted proxy",
+			modify:  func(env map[string]string) { env["TRUSTED_PROXIES"] = "172.16.0.0/12,backend" },
+			wantErr: []string{"TRUSTED_PROXIES must be"},
 		},
 		{
 			name:    "invalid cookie secure",
