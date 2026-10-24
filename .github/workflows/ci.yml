@@ -1,0 +1,104 @@
+# Checks every push to dev/master and every PR into them. Nothing is deployed
+# or pushed; the jobs only test and build.
+name: CI
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+    branches: [dev, master]
+
+# Read-only token: no job needs to write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  # Same scan as the pre-commit hook, but over the whole history, because the
+  # hook can be skipped or not installed.
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (same version as .pre-commit-config.yaml)
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+      # --redact keeps any finding out of the public job log.
+      - name: Scan all commits
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --verbose .'
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      # Throwaway server for the integration tests; each test creates and
+      # drops its own mogumogu_test_* database on it.
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_USER: mogumogu
+          POSTGRES_PASSWORD: ci-only-placeholder
+          POSTGRES_DB: mogumogu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mogumogu -d mogumogu"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgres://mogumogu:ci-only-placeholder@localhost:5432/mogumogu?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go vet ./...
+      # CI=true makes the integration tests fail instead of skip if the
+      # database were missing (see internal/testdb).
+      - run: go test -count=1 ./...
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # The runner is UTC; also run in Tokyo time, like `make test` runs in
+      # both zones, to prove dates do not depend on the machine's zone.
+      - run: npm test
+      - run: TZ=Asia/Tokyo npm test
+
+  # Builds both images the way compose does (repo root as context). Not pushed.
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -f backend/Dockerfile -t mogumogu-backend:ci .
+      - run: docker build -f frontend/Dockerfile -t mogumogu-web:ci .

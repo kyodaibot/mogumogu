@@ -103,6 +103,13 @@ AWS 和任何云资源、HTTPS 证书、推送镜像到仓库、自动部署（�
 | `frontend` | `npm ci`、`npm run build`、`npm test` |
 | `docker` | 构建后端和前端两个镜像，不推送 |
 
+**状态：已实施（2026-10-24），各 job 的命令已在本地模拟通过；在 GitHub 上的运行结果待推送后确认。** 实施时的调整：
+
+- Action 使用当前的主版本 `@v7`（checkout、setup-go、setup-node），checkout 设置 `persist-credentials: false`。
+- gitleaks 加 `--redact`，即使发现问题也不会把密钥打印到公开的 CI 日志里。
+- `internal/testdb`：设置了 `CI` 环境变量（GitHub Actions 会自动设置）而没有 `TEST_DATABASE_URL` 时，集成测试直接失败而不是跳过。这样「集成测试真的执行了」由 CI 本身保证，不必每次翻日志。
+- 前端测试在 UTC 和 Asia/Tokyo 两个时区各跑一次，与 `make test` 一致。
+
 ### 里程碑 3：备份与文档
 
 - **`make db-backup`**：用 `pg_dump -Fc` 导出数据库，保存到 `backups/mogumogu-<时间>.dump`。`backups/` 加入 `.gitignore`，因为备份里有个人资料和密码哈希。
