@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { api, type MealRecord, type ScheduleEvent } from '../api'
+import { api, type MealRecord, type MealType, type ScheduleEvent } from '../api'
 import EventForm from '../components/EventForm.vue'
 import MealForm from '../components/MealForm.vue'
+import MealTray from '../components/MealTray.vue'
 import {
   WEEKDAY_HEADERS,
   dayOfMonth,
@@ -64,6 +65,26 @@ function mealsOn(day: Ymd) {
   return meals.value.filter((m) => m.date === day)
 }
 
+// Per-day summary for the grid cells: event count and which meal types have a record.
+const summaries = computed(() => {
+  const out = new Map<Ymd, { events: number; meals: MealType[] }>()
+  for (const week of grid.value.weeks) {
+    for (const day of week) {
+      const meals = MEAL_TYPES.map((t) => t.value).filter((t) => mealsOn(day).some((m) => m.meal_type === t))
+      out.set(day, { events: eventsOn(day).length, meals })
+    }
+  }
+  return out
+})
+
+function dayLabel(day: Ymd): string {
+  const s = summaries.value.get(day)!
+  const parts = [formatDayTitle(day)]
+  if (s.events) parts.push(`行程 ${s.events} 项`)
+  parts.push(s.meals.length ? `已记录${s.meals.map((t) => MEAL_TYPES.find((x) => x.value === t)!.label).join('、')}` : '没有饮食记录')
+  return parts.join('，')
+}
+
 const dayEvents = computed(() => eventsOn(selected.value))
 const dayMealGroups = computed(() =>
   MEAL_TYPES.map((t) => ({ ...t, items: mealsOn(selected.value).filter((m) => m.meal_type === t.value) })).filter(
@@ -111,11 +132,13 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
   <main class="page calendar-page">
     <section class="calendar">
       <header class="month-nav">
-        <button type="button" aria-label="上个月" @click="goMonth(-1)">‹</button>
         <h1>{{ view.year }}年{{ view.month }}月</h1>
-        <button type="button" aria-label="下个月" @click="goMonth(1)">›</button>
-        <button type="button" @click="goToday">今天</button>
-        <span v-if="loading" class="muted">加载中…</span>
+        <span v-if="loading" class="muted loading">加载中…</span>
+        <div class="month-buttons">
+          <button type="button" class="icon" aria-label="上个月" @click="goMonth(-1)">‹</button>
+          <button type="button" @click="goToday">今天</button>
+          <button type="button" class="icon" aria-label="下个月" @click="goMonth(1)">›</button>
+        </div>
       </header>
 
       <div v-if="loadError" class="banner error" role="alert">
@@ -136,23 +159,36 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
               outside: !day.startsWith(monthPrefix),
               today: day === today,
               selected: day === selected,
+              future: day > today,
             }"
             :aria-selected="day === selected"
-            :aria-label="formatDayTitle(day)"
+            :aria-label="dayLabel(day)"
             @click="select(day)"
           >
             <span class="num">{{ dayOfMonth(day) }}</span>
-            <span v-if="eventsOn(day).length" class="badge event">行程 {{ eventsOn(day).length }}</span>
-            <span v-if="mealsOn(day).length" class="badge meal">饮食 {{ mealsOn(day).length }}</span>
+            <span class="marks">
+              <MealTray
+                v-if="(day <= today && day.startsWith(monthPrefix)) || summaries.get(day)!.meals.length"
+                :filled="summaries.get(day)!.meals"
+              />
+              <span v-if="summaries.get(day)!.events" class="badge event">行程 {{ summaries.get(day)!.events }}</span>
+            </span>
           </button>
         </template>
       </div>
+
+      <ul class="legend" aria-label="餐盘图例">
+        <li v-for="t in MEAL_TYPES" :key="t.value"><span class="swatch" :class="t.value"></span>{{ t.label }}</li>
+      </ul>
     </section>
 
     <section class="day-panel">
       <header class="day-header">
-        <h2>{{ formatDayTitle(selected) }}<span v-if="selected === today" class="muted">（今天）</span></h2>
-        <button type="button" class="ask-ai" disabled title="即将开放">Ask AI（即将开放）</button>
+        <div>
+          <h2>{{ formatDayTitle(selected) }}</h2>
+          <span v-if="selected === today" class="today-chip">今天</span>
+        </div>
+        <button type="button" class="ask-ai" disabled title="即将开放">Ask AI<small>即将开放</small></button>
       </header>
 
       <p v-if="actionError" class="banner error" role="alert">{{ actionError }}</p>
@@ -171,8 +207,8 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
       />
       <p v-if="!loading && dayEvents.length === 0" class="muted empty">这一天还没有行程。</p>
       <ul class="items">
-        <li v-for="e in dayEvents" :key="e.id" class="item">
-          <div>
+        <li v-for="e in dayEvents" :key="e.id" class="item event">
+          <div class="body">
             <div class="time">{{ formatTime(e.starts_at, selected) }} – {{ formatTime(e.ends_at, selected) }}</div>
             <div class="title">{{ e.title }}</div>
             <div v-if="e.notes" class="notes">{{ e.notes }}</div>
@@ -197,11 +233,11 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
         @cancel="editing = null"
       />
       <p v-if="!loading && dayMealGroups.length === 0" class="muted empty">这一天还没有饮食记录。</p>
-      <div v-for="g in dayMealGroups" :key="g.value" class="meal-group">
-        <h4>{{ g.label }}</h4>
+      <div v-for="g in dayMealGroups" :key="g.value" class="meal-group" :class="g.value">
+        <h4><span class="swatch" :class="g.value"></span>{{ g.label }}</h4>
         <ul class="items">
           <li v-for="m in g.items" :key="m.id" class="item">
-            <div>
+            <div class="body">
               <div class="title">{{ m.content }}</div>
               <div class="nutrients">
                 <span v-for="n in NUTRIENTS" :key="n.key" :class="{ unknown: m[n.key] === null }">
@@ -223,173 +259,386 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
 <style scoped>
 .calendar-page {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
-  gap: 1.5rem;
-  max-width: 72rem;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem);
+  align-items: start;
+  gap: 2.5rem;
+  max-width: 76rem;
 }
 
-@media (max-width: 800px) {
-  .calendar-page {
-    grid-template-columns: 1fr;
-  }
+/* On wide screens the month stays in view while a long day panel scrolls. */
+.calendar {
+  position: sticky;
+  top: 5rem;
 }
+
+/* ---------- Month ---------- */
 
 .month-nav {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .month-nav h1 {
-  font-size: 1.3rem;
-  margin: 0 0.5rem;
-  min-width: 7.5rem;
-  text-align: center;
+  margin: 0;
+  font-family: var(--font-num);
+  font-size: var(--fs-h1);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.month-buttons {
+  display: flex;
+  gap: 0.375rem;
+  margin-left: auto;
+}
+
+.month-buttons button {
+  padding: 0.375rem 0.875rem;
+}
+
+.month-buttons .icon {
+  width: 2.375rem;
+  padding: 0.375rem 0;
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
+  gap: 0.375rem;
 }
 
 .weekday {
+  padding-bottom: 0.25rem;
   text-align: center;
-  font-size: 0.8rem;
-  color: var(--muted);
-  padding: 0.25rem 0;
+  font-size: var(--fs-small);
+  color: var(--ink-soft);
 }
 
 .day {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   align-items: flex-start;
-  gap: 2px;
-  min-height: 4.5rem;
-  padding: 0.3rem;
-  border-radius: 4px;
+  min-height: 5.75rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
   text-align: left;
+  font-weight: 400;
+}
+
+.day:hover:not(.selected) {
+  border-color: var(--line-strong);
+  background: var(--paper);
 }
 
 .day.outside {
-  opacity: 0.45;
+  border-color: transparent;
+  background: none;
 }
 
-.day.today .num {
-  background: var(--accent);
-  color: var(--bg);
-  border-radius: 999px;
-  padding: 0 0.4rem;
+.day.outside .num {
+  color: var(--ink-soft);
+  font-weight: 500;
+  opacity: 0.6;
 }
 
 .day.selected {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+  background: var(--primary-soft);
 }
 
 .num {
-  font-weight: 600;
-  font-size: 0.9rem;
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.125rem 0 0 -0.125rem;
+  border-radius: 999px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.day.today .num {
+  background: var(--today);
+  color: var(--on-today);
+}
+
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.375rem;
+}
+
+/* A bigger tray in the roomy desktop cells; MealTray reads its slot size from --slot. */
+.day :deep(.tray) {
+  --slot: 10px;
 }
 
 .badge {
-  font-size: 0.7rem;
-  border-radius: 3px;
-  padding: 0 0.3rem;
+  padding: 0 0.375rem;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  line-height: 1.6;
   white-space: nowrap;
 }
 
 .badge.event {
-  background: var(--event-bg);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
-.badge.meal {
-  background: var(--meal-bg);
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0.875rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-small);
+  color: var(--ink-soft);
 }
 
-.day-header,
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.swatch {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 3px;
+}
+
+.swatch.breakfast { background: var(--meal-breakfast); }
+.swatch.lunch { background: var(--meal-lunch); }
+.swatch.dinner { background: var(--meal-dinner); }
+.swatch.snack { background: var(--meal-snack); }
+
+/* ---------- Day panel ---------- */
+
+.day-panel {
+  padding: 1.5rem;
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.day-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.day-header h2 {
+  display: inline;
+  margin: 0;
+  font-size: var(--fs-h2);
+}
+
+.today-chip {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--today);
+  color: var(--on-today);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  vertical-align: 0.15em;
+}
+
+.ask-ai {
+  display: grid;
+  justify-items: center;
+  padding: 0.375rem 0.875rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  border-style: dashed;
+  background: none;
+}
+
+.ask-ai small {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
 .section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-}
-
-.day-header h2 {
-  font-size: 1.15rem;
-  margin: 0.25rem 0;
-}
-
-.section-title {
-  margin-top: 1.25rem;
+  margin-top: 1.75rem;
 }
 
 .section-title h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--fs-h3);
 }
 
-.ask-ai {
-  white-space: nowrap;
+.section-title button {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
 }
 
 .items {
   list-style: none;
   padding: 0;
-  margin: 0.5rem 0;
+  margin: 0.625rem 0 0;
   display: grid;
   gap: 0.5rem;
 }
 
+/* Each record carries its colour on the left edge: blue for events, the meal colour for meals. */
 .item {
   display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem 0.5rem 0.75rem 1rem;
+  border-radius: 12px;
+  background: var(--paper);
+  border-left: 4px solid var(--bar, var(--primary));
+}
+
+.meal-group.breakfast { --bar: var(--meal-breakfast); }
+.meal-group.lunch { --bar: var(--meal-lunch); }
+.meal-group.dinner { --bar: var(--meal-dinner); }
+.meal-group.snack { --bar: var(--meal-snack); }
+
+.body {
+  flex: 1;
+  min-width: 0;
 }
 
 .time {
-  font-size: 0.85rem;
-  color: var(--muted);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 
 .title {
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .notes {
-  font-size: 0.85rem;
+  margin-top: 0.125rem;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .nutrients {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.75rem;
-  font-size: 0.8rem;
+  gap: 0.125rem 0.875rem;
+  margin-top: 0.125rem;
+  font-family: var(--font-num);
+  font-size: var(--fs-small);
 }
 
 .nutrients .unknown {
-  color: var(--muted);
+  color: var(--ink-soft);
 }
 
 .item-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.25rem;
+  gap: 0.125rem;
+  flex-shrink: 0;
+}
+
+.item-actions button {
+  white-space: nowrap;
+  font-size: 0.875rem;
 }
 
 .meal-group h4 {
-  margin: 0.75rem 0 0;
-  font-size: 0.9rem;
-  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
 }
 
 .empty {
-  margin: 0.5rem 0;
+  margin: 0.625rem 0 0;
+}
+
+/* ---------- Narrow screens ---------- */
+
+@media (max-width: 900px) {
+  .calendar-page {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+    margin-top: 1.25rem;
+  }
+
+  .calendar {
+    position: static;
+  }
+
+  .day-panel {
+    padding: 1.25rem 1rem;
+  }
+}
+
+@media (max-width: 560px) {
+  .calendar-page {
+    padding: 0 0.75rem;
+  }
+
+  .month-nav h1 {
+    font-size: var(--fs-h2);
+  }
+
+  .grid {
+    gap: 0.25rem;
+  }
+
+  .weekday {
+    font-size: 0.6875rem;
+  }
+
+  .day {
+    min-height: 4.25rem;
+    padding: 0.25rem;
+    border-radius: 9px;
+  }
+
+  .num {
+    min-width: 1.5rem;
+    height: 1.5rem;
+    margin: 0;
+    font-size: 0.875rem;
+  }
+
+  .day :deep(.tray) {
+    --slot: 7px;
+  }
+
+  .badge {
+    padding: 0 0.25rem;
+    font-size: 0.625rem;
+  }
+
+  .day-panel {
+    margin: 0 -0.75rem;
+    border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  }
 }
 </style>
