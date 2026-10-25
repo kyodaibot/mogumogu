@@ -4,6 +4,7 @@ import { api, type MealRecord, type MealType, type ScheduleEvent } from '../api'
 import EventForm from '../components/EventForm.vue'
 import MealForm from '../components/MealForm.vue'
 import MealTray from '../components/MealTray.vue'
+import MonthPicker from '../components/MonthPicker.vue'
 import {
   WEEKDAY_HEADERS,
   dayOfMonth,
@@ -105,6 +106,11 @@ function goMonth(delta: number) {
   editing.value = null
 }
 
+function jumpTo(year: number, month: number) {
+  view.value = { year, month }
+  editing.value = null
+}
+
 function goToday() {
   view.value = yearMonthOf(today)
   select(today)
@@ -132,7 +138,9 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
   <main class="page calendar-page">
     <section class="calendar">
       <header class="month-nav">
-        <h1>{{ view.year }}年{{ view.month }}月</h1>
+        <h1>
+          <MonthPicker :year="view.year" :month="view.month" :current="yearMonthOf(today)" @pick="jumpTo" />
+        </h1>
         <span v-if="loading" class="muted loading">加载中…</span>
         <div class="month-buttons">
           <button type="button" class="icon" aria-label="上个月" @click="goMonth(-1)">‹</button>
