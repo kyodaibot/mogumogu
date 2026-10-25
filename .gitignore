@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Database backups (personal data and password hashes)
+backups/
+
 # Frontend
 node_modules/
 frontend/dist/

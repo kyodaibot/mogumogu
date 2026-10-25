@@ -10,7 +10,7 @@ BACKEND_BIN := backend/bin/server
 WITH_ENV := set -a; . ./.env; set +a;
 
 .PHONY: help setup check-env db db-stop db-down migrate-up migrate-down migrate-version migrate-create \
-	backend backend-build frontend dev test test-integration test-e2e app-up app-down app-logs
+	backend backend-build frontend dev test test-integration test-e2e app-up app-down app-logs db-backup
 
 help:
 	@echo "Usage: make <target>"
@@ -29,6 +29,7 @@ help:
 	@echo "  migrate-create    Add an empty migration pair: make migrate-create name=add_something"
 	@echo "  db-stop           Stop the database container (data kept)"
 	@echo "  db-down           Remove the database container (data kept in the pgdata volume)"
+	@echo "  db-backup         Dump the database to backups/mogumogu-<time>.dump (restore: docs/operations.md)"
 	@echo ""
 	@echo "  app-up            Build images and start everything in containers: http://localhost:8000"
 	@echo "  app-down          Stop and remove all containers, including the database (data kept)"
@@ -115,6 +116,19 @@ test-integration: check-env db
 # Creates and drops its own mogumogu_e2e_* database; see e2e/run.sh.
 test-e2e: check-env db backend-build frontend/node_modules
 	./e2e/run.sh
+
+# pg_dump runs inside the postgres container, so its version always matches
+# the server and nothing but Docker is needed. The file is written under a
+# temporary name first, so a failed dump never looks like a finished backup,
+# and is readable only by you (it holds password hashes and personal data).
+db-backup: check-env db
+	@mkdir -p backups
+	@umask 077; f="backups/mogumogu-$$(date +%Y%m%d-%H%M%S).dump"; \
+	if docker compose exec -T postgres sh -c 'pg_dump -Fc -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' > "$$f.partial"; then \
+		mv "$$f.partial" "$$f" && echo "Backup written to $$f ($$(du -h "$$f" | awk '{print $$1}'))"; \
+	else \
+		rm -f "$$f.partial"; echo "Backup failed"; exit 1; \
+	fi
 
 # Container setup (compose profile `app`): database, migrations, backend and
 # Nginx. It shares the postgres container and data with `make dev`.
