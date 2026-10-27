@@ -16,8 +16,9 @@ const (
 	maxEventDuration = 24 * time.Hour
 )
 
-// dateRange parses the inclusive from/to query parameters (docs/api.md 6.2).
-func dateRange(c *gin.Context) (tz.Date, tz.Date, bool) {
+// dateRange parses the inclusive from/to query parameters (docs/api.md 6.2),
+// which may cover at most maxDays days.
+func dateRange(c *gin.Context, maxDays int) (tz.Date, tz.Date, bool) {
 	rawFrom, rawTo := c.Query("from"), c.Query("to")
 	if rawFrom == "" || rawTo == "" {
 		abortError(c, http.StatusBadRequest, "invalid_request", "Query parameters from and to are required.")
@@ -36,7 +37,7 @@ func dateRange(c *gin.Context) (tz.Date, tz.Date, bool) {
 		switch {
 		case to.Before(from):
 			v.add("to", "must_not_be_before_from")
-		case from.DaysUntil(to)+1 > maxRangeDays:
+		case from.DaysUntil(to)+1 > maxDays:
 			v.add("to", "range_too_large")
 		}
 	}
@@ -128,12 +129,18 @@ func bindEvent(c *gin.Context, userID int64) (store.ScheduleEvent, bool) {
 
 func (a *api) listEvents(c *gin.Context) {
 	sess, _ := sessionOf(c)
-	from, to, ok := dateRange(c)
+	a.writeEvents(c, sess.UserID, maxRangeDays)
+}
+
+// writeEvents answers a from/to list request for userID; the internal API
+// shares it with a smaller maxDays.
+func (a *api) writeEvents(c *gin.Context, userID int64, maxDays int) {
+	from, to, ok := dateRange(c, maxDays)
 	if !ok {
 		return
 	}
 	start, end := tz.RangeBounds(from, to)
-	events, err := a.store.ListEvents(c.Request.Context(), sess.UserID, start, end)
+	events, err := a.store.ListEvents(c.Request.Context(), userID, start, end)
 	if err != nil {
 		abortInternal(c, a.logger, err)
 		return
@@ -269,11 +276,16 @@ func bindMeal(c *gin.Context, userID int64) (store.MealRecord, bool) {
 
 func (a *api) listMeals(c *gin.Context) {
 	sess, _ := sessionOf(c)
-	from, to, ok := dateRange(c)
+	a.writeMeals(c, sess.UserID, maxRangeDays)
+}
+
+// writeMeals is writeEvents for meal records.
+func (a *api) writeMeals(c *gin.Context, userID int64, maxDays int) {
+	from, to, ok := dateRange(c, maxDays)
 	if !ok {
 		return
 	}
-	meals, err := a.store.ListMeals(c.Request.Context(), sess.UserID, from.Time(), to.Time())
+	meals, err := a.store.ListMeals(c.Request.Context(), userID, from.Time(), to.Time())
 	if err != nil {
 		abortInternal(c, a.logger, err)
 		return

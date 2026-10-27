@@ -35,6 +35,19 @@ type Deps struct {
 	// TrustedProxies are the peers whose X-Forwarded-For is believed (see
 	// config.Config). Nil means ClientIP is always the TCP peer.
 	TrustedProxies []string
+	// The meal assistant: the AI service, the tokens its query tools use, and
+	// the daily message quota per user and for the whole site.
+	Assistant          Replier
+	AgentTokens        *auth.AgentTokens
+	AssistantUserLimit int
+	AssistantSiteLimit int
+}
+
+// InternalDeps are the internal router's collaborators.
+type InternalDeps struct {
+	Logger      *slog.Logger
+	Store       *store.Store
+	AgentTokens *auth.AgentTokens
 }
 
 type api struct {
@@ -46,6 +59,11 @@ type api struct {
 	registerLimiter *auth.Limiter
 	allowedOrigins  []string
 	cookieSecure    bool
+
+	assistant          Replier
+	agentTokens        *auth.AgentTokens
+	assistantUserLimit int
+	assistantSiteLimit int
 }
 
 func init() {
@@ -76,6 +94,8 @@ func NewRouter(d Deps) *gin.Engine {
 		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
 		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter,
 		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
+		assistant: d.Assistant, agentTokens: d.AgentTokens,
+		assistantUserLimit: d.AssistantUserLimit, assistantSiteLimit: d.AssistantSiteLimit,
 	}
 	app := r.Group("/api", a.resolveSession)
 
@@ -104,6 +124,23 @@ func NewRouter(d Deps) *gin.Engine {
 	private.PUT("/meal-records/:id", a.updateMeal)
 	private.DELETE("/meal-records/:id", a.deleteMeal)
 
+	private.POST("/assistant/messages", a.postAssistantMessage)
+
+	return r
+}
+
+// NewInternalRouter serves the read-only API the AI service's query tools call
+// (docs/api.md 9.3). It listens on its own port, which Nginx never forwards
+// to and which is not published outside the container network.
+func NewInternalRouter(d InternalDeps) *gin.Engine {
+	r := gin.New()
+	r.Use(requestLogger(d.Logger), gin.Recovery())
+	r.NoRoute(abortNotFound)
+
+	a := &api{logger: d.Logger, store: d.Store, agentTokens: d.AgentTokens}
+	agent := r.Group("/internal/agent", a.agentAuth)
+	agent.GET("/events", a.agentEvents)
+	agent.GET("/meals", a.agentMeals)
 	return r
 }
 

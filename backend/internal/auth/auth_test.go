@@ -235,3 +235,42 @@ func TestLimiter(t *testing.T) {
 		t.Fatal("Reset did not clear the key")
 	}
 }
+
+func TestAgentTokens(t *testing.T) {
+	tokens, err := NewAgentTokens()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := baseTime
+	tokens.now = func() time.Time { return now }
+
+	token := tokens.Issue(42)
+	if id, err := tokens.Verify(token); err != nil || id != 42 {
+		t.Fatalf("valid token: id=%d err=%v", id, err)
+	}
+
+	other, _ := NewAgentTokens()
+	parts := strings.Split(token, ".")
+	for name, bad := range map[string]string{
+		"empty":         "",
+		"malformed":     "42.123",
+		"other user":    "43." + parts[1] + "." + parts[2],
+		"later expiry":  parts[0] + ".9999999999." + parts[2],
+		"other process": other.Issue(42),
+		"bad signature": parts[0] + "." + parts[1] + ".AAAA",
+		"session-like":  "v1.s.1.x.y",
+	} {
+		if _, err := tokens.Verify(bad); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	now = baseTime.Add(AgentTokenTTL - time.Second)
+	if _, err := tokens.Verify(token); err != nil {
+		t.Fatalf("token rejected before expiry: %v", err)
+	}
+	now = baseTime.Add(AgentTokenTTL)
+	if _, err := tokens.Verify(token); err == nil {
+		t.Fatal("expired token accepted")
+	}
+}

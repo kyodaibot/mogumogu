@@ -14,20 +14,27 @@ import (
 )
 
 const (
-	DefaultAppPort     = 8080
-	defaultSSLMode     = "disable"
-	defaultJWTTTL      = 7 * 24 * time.Hour
-	defaultJWTIssuer   = "mogumogu"
-	defaultJWTAudience = "mogumogu-web"
-	minSecretBytes     = 32
+	DefaultAppPort      = 8080
+	defaultInternalPort = 8081
+	defaultAIServiceURL = "http://127.0.0.1:8090"
+	defaultUserLimit    = 30
+	defaultSiteLimit    = 300
+	defaultSSLMode      = "disable"
+	defaultJWTTTL       = 7 * 24 * time.Hour
+	defaultJWTIssuer    = "mogumogu"
+	defaultJWTAudience  = "mogumogu-web"
+	minSecretBytes      = 32
 )
 
 var validSSLModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 
 type Config struct {
 	AppPort int
-	DB      DBConfig
-	Auth    AuthConfig
+	// InternalPort serves the API the AI service's query tools call.
+	InternalPort int
+	DB           DBConfig
+	Auth         AuthConfig
+	Assistant    AssistantConfig
 	// TrustedProxies lists the IPs or CIDR ranges whose X-Forwarded-For header
 	// is believed. Empty (the default) means the TCP peer is the client.
 	TrustedProxies []string
@@ -50,6 +57,14 @@ type AuthConfig struct {
 	CSRFSecret     []byte
 	AllowedOrigins []string
 	CookieSecure   bool
+}
+
+type AssistantConfig struct {
+	// ServiceURL is the base URL of the AI service (ai/).
+	ServiceURL string
+	// Daily message quota per user and for the whole site.
+	UserLimit int
+	SiteLimit int
 }
 
 // LogValue keeps the password out of logs if the struct is ever logged.
@@ -90,9 +105,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	r := newReader(lookup)
 	cfg := Config{
 		AppPort:        r.port("APP_PORT", false, DefaultAppPort),
+		InternalPort:   r.port("INTERNAL_PORT", false, defaultInternalPort),
 		DB:             r.db(),
 		Auth:           r.auth(),
+		Assistant:      r.assistant(),
 		TrustedProxies: r.trustedProxies(),
+	}
+	if cfg.AppPort != 0 && cfg.AppPort == cfg.InternalPort {
+		return Config{}, errors.New("invalid configuration: INTERNAL_PORT must differ from APP_PORT")
 	}
 	if err := r.err(); err != nil {
 		return Config{}, err
@@ -210,6 +230,35 @@ func (r *reader) auth() AuthConfig {
 		a.CookieSecure = b
 	}
 	return a
+}
+
+func (r *reader) assistant() AssistantConfig {
+	a := AssistantConfig{
+		ServiceURL: defaultAIServiceURL,
+		UserLimit:  r.positiveInt("ASSISTANT_USER_DAILY_LIMIT", defaultUserLimit),
+		SiteLimit:  r.positiveInt("ASSISTANT_SITE_DAILY_LIMIT", defaultSiteLimit),
+	}
+	if raw := r.get("AI_SERVICE_URL"); raw != "" {
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			r.problems = append(r.problems, "AI_SERVICE_URL must be a URL such as http://127.0.0.1:8090")
+		} else {
+			a.ServiceURL = strings.TrimSuffix(raw, "/")
+		}
+	}
+	return a
+}
+
+func (r *reader) positiveInt(key string, def int) int {
+	raw := r.get(key)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		r.problems = append(r.problems, key+" must be a positive integer")
+		return def
+	}
+	return n
 }
 
 // trustedProxies reads TRUSTED_PROXIES, a comma-separated list of IPs or CIDR
