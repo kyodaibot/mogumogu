@@ -81,7 +81,13 @@ resource "aws_iam_role_policy" "app" {
         Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
         Resource = "arn:aws:ssm:${var.region}:${local.account_id}:parameter/mogumogu/*"
       },
-      # Deploy files (read only).
+      # Deploy files, read only. `aws s3 sync` lists the bucket first.
+      {
+        Sid      = "DeployFilesList"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.deploy.arn
+      },
       {
         Sid      = "DeployFiles"
         Effect   = "Allow"
