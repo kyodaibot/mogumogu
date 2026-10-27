@@ -11,3 +11,6 @@ backups
 .claude
 CLAUDE.local.md
 .mcp.json
+**/.venv
+**/__pycache__
+**/.pytest_cache
