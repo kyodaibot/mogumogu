@@ -70,6 +70,20 @@ export interface MealRecord extends MealRecordInput {
   updated_at: string
 }
 
+export interface Recommendation {
+  name: string
+  description: string
+  reason: string
+}
+
+export interface AssistantReply {
+  reply: string
+  /** Empty, or exactly three. */
+  recommendations: Recommendation[]
+  /** The assistant asks which meal; show the three meal questions. */
+  ask_meal_type: boolean
+}
+
 let unauthorizedHandler: () => void = () => {}
 
 /** Registers what to do when the session turns out to be invalid. */
@@ -105,4 +119,7 @@ export const api = {
   createMeal: (m: MealRecordInput) => req<MealRecord>('POST', '/api/meal-records', m),
   updateMeal: (id: number, m: MealRecordInput) => req<MealRecord>('PUT', `/api/meal-records/${id}`, m),
   deleteMeal: (id: number) => req<void>('DELETE', `/api/meal-records/${id}`),
+
+  sendAssistantMessage: (date: string, message: string) =>
+    req<AssistantReply>('POST', '/api/assistant/messages', { date, message }),
 }

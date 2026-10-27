@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api, type MealRecord, type MealType, type ScheduleEvent } from '../api'
+import AssistantChat from '../components/AssistantChat.vue'
 import EventForm from '../components/EventForm.vue'
 import MealForm from '../components/MealForm.vue'
 import MealTray from '../components/MealTray.vue'
@@ -192,11 +193,8 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
 
     <section class="day-panel">
       <header class="day-header">
-        <div>
-          <h2>{{ formatDayTitle(selected) }}</h2>
-          <span v-if="selected === today" class="today-chip">今天</span>
-        </div>
-        <button type="button" class="ask-ai" disabled title="即将开放">Ask AI<small>即将开放</small></button>
+        <h2>{{ formatDayTitle(selected) }}</h2>
+        <span v-if="selected === today" class="today-chip">今天</span>
       </header>
 
       <p v-if="actionError" class="banner error" role="alert">{{ actionError }}</p>
@@ -261,6 +259,8 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
         </ul>
       </div>
     </section>
+
+    <AssistantChat :date="selected" :today="today" />
   </main>
 </template>
 
@@ -271,6 +271,8 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
   align-items: start;
   gap: 2.5rem;
   max-width: 76rem;
+  /* Room below the last record for the floating assistant button. */
+  padding-bottom: 4rem;
 }
 
 /* On wide screens the month stays in view while a long day panel scrolls. */
@@ -441,10 +443,6 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
 }
 
 .day-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
   margin-bottom: 0.5rem;
 }
 
@@ -464,22 +462,6 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
   font-size: var(--fs-small);
   font-weight: 700;
   vertical-align: 0.15em;
-}
-
-.ask-ai {
-  display: grid;
-  justify-items: center;
-  padding: 0.375rem 0.875rem;
-  line-height: 1.25;
-  white-space: nowrap;
-  border-style: dashed;
-  background: none;
-}
-
-.ask-ai small {
-  font-size: 0.6875rem;
-  font-weight: 400;
-  color: var(--ink-soft);
 }
 
 .section-title {
@@ -607,7 +589,7 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
 
 @media (max-width: 560px) {
   .calendar-page {
-    padding: 0 0.75rem;
+    padding-inline: 0.75rem;
   }
 
   .month-nav h1 {

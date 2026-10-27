@@ -17,8 +17,10 @@ backend/bin/
 *.test
 *.out
 
-# Python (later phases)
+# Python
 .venv/
+__pycache__/
+.pytest_cache/
 
 # OS
 .DS_Store
@@ -28,4 +30,4 @@ backend/bin/
 CLAUDE.local.md
 .mcp.json
 
-docs/*.html
+docs/diagram/

@@ -80,7 +80,7 @@ async function connect() {
           } else if (msg.method === 'Network.requestWillBeSent') {
             const r = msg.params.request
             if (r.url.includes('/api/')) {
-              requests.push({ id: msg.params.requestId, method: r.method, url: r.url.replace(BASE, ''), csrf: r.headers['X-CSRF-Token'], origin: sentOrigins.get(msg.params.requestId) })
+              requests.push({ id: msg.params.requestId, method: r.method, url: r.url.replace(BASE, ''), body: r.postData, csrf: r.headers['X-CSRF-Token'], origin: sentOrigins.get(msg.params.requestId) })
             }
           } else if (msg.method === 'Network.requestWillBeSentExtraInfo') {
             // The headers actually sent, including Origin which the browser adds late.
@@ -202,12 +202,42 @@ async function main() {
   const headers = await evaluate(`[...document.querySelectorAll('.weekday')].map(e => e.innerText)`)
   check('week starts on Monday', headers[0] === '周一' && headers[6] === '周日', headers.join(' '))
 
-  // Ask AI is disabled and sends nothing.
-  const before = requests.length
-  const disabled = await evaluate(`${q('.ask-ai')}.disabled`)
-  await evaluate(`${q('.ask-ai')}.click()`)
-  await settle()
-  check('Ask AI is disabled and sends no request', disabled && requests.length === before)
+  // --- meal assistant (the AI service runs with the fake model) ---
+  check('old Ask AI button is gone', !(await evaluate(`!!${q('.ask-ai')}`)))
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel .intro .chip')`, 'assistant panel with presets')
+  const presets = await evaluate(`[...document.querySelectorAll('.panel .intro .chip')].map(e => e.innerText)`)
+  check('assistant opens with 4 preset questions for today', presets.length === 4 && presets[1] === '今天午餐吃什么？', presets.join(' / '))
+  await clickText('.panel .chip', '今天午餐吃什么？')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 3`, 'three recommendation cards')
+  const firstAsk = requests.find((r) => r.url === '/api/assistant/messages')
+  check('preset question gets 3 recommendation cards; presets hidden',
+    !(await evaluate(`!!${q('.panel .intro')}`)) && JSON.parse(firstAsk.body).date === today, firstAsk.body)
+
+  await click('.panel .close')
+  await waitFor(`!document.querySelector('.panel')`, 'panel closed')
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel')`, 'panel reopened')
+  check('closing and reopening keeps the conversation', await evaluate(`document.querySelectorAll('.panel .rec').length === 3`))
+
+  // Another date: the conversation continues below a divider.
+  const tomorrowCellExpr = `[...document.querySelectorAll('.day')].find(d => d.classList.contains('today')).nextElementSibling`
+  await evaluate(`(${tomorrowCellExpr}).click()`)
+  await waitFor(`!document.querySelector('.panel .target .today-mark')`, 'panel follows the selected date')
+  await fill('#assistant-input', '那天吃什么？')
+  await click('.composer button[type=submit]')
+  await waitFor(`document.querySelectorAll('.panel .follow-up .chip').length === 3`, 'meal choice buttons')
+  const divider = await textOf('.panel .divider')
+  check('new date: divider shown, earlier messages kept', divider.startsWith('以下关于') && (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 3, divider)
+  await clickText('.panel .follow-up .chip', '明天晚餐吃什么？')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 6`, 'recommendations for tomorrow')
+  const asks = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body))
+  check('each message carries its own target date',
+    asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明天晚餐吃什么？',
+    asks.map((a) => `${a.date} ${a.message}`).join(' | '))
+  await click('.panel .close')
+  await clickText('button', '今天')
+  await waitFor(`!!document.querySelector('.day.today.selected')`, 'back to today')
 
   // Overnight event on today -> appears on today and tomorrow.
   await clickText('button', '+ 新增行程')
@@ -255,6 +285,10 @@ async function main() {
   await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
     document.body.innerText.includes('E2E 夜间实验') && document.body.innerText.includes('（大份）')`, 'data after reload')
   check('data still there after reload', true)
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
+  check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
+  await click('.panel .close')
 
   // Delete the event (accept the confirm dialog).
   await evaluate(`window.confirm = () => true`)

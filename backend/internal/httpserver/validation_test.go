@@ -223,7 +223,7 @@ func TestProfileNumberRanges(t *testing.T) {
 
 func TestDateRange(t *testing.T) {
 	handler := func(c *gin.Context) {
-		if _, _, ok := dateRange(c); ok {
+		if _, _, ok := dateRange(c, maxRangeDays); ok {
 			c.Status(http.StatusNoContent)
 		}
 	}

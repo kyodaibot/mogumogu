@@ -78,8 +78,9 @@
 | 409 | `username_taken` | 注册时用户名已被使用 |
 | 413 | `payload_too_large` | 请求体超过 64 KB |
 | 422 | `validation_failed` | 字段值不符合规则，见 `details` |
-| 429 | `rate_limited` | 触发限流；响应带 `Retry-After` 头（秒） |
+| 429 | `rate_limited` | 触发限流或饮食助手的调用额度用完；响应带 `Retry-After` 头（秒） |
 | 500 | `internal_error` | 服务端错误 |
+| 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效）。不计入调用额度，可以重试 |
 
 `details[].reason` 取值：
 
@@ -172,6 +173,8 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 | `POST /api/auth/login` | 同一 IP + 用户名，15 分钟内失败 5 次后，返回 `429`，直到窗口结束 |
 | `POST /api/auth/register` | 同一 IP，每小时 10 次 |
 
+饮食助手的调用额度不是限流，规则见 9.2。
+
 前端目前只显示「尝试次数过多，请稍后再试」。以后可以读取 `Retry-After` 响应头，显示剩余的等待时间或倒计时。
 
 ## 3. 接口一览
@@ -197,6 +200,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 | GET | `/api/meal-records/{id}` | 是 | 读取一条饮食记录 |
 | PUT | `/api/meal-records/{id}` | 是 | 替换一条饮食记录 |
 | DELETE | `/api/meal-records/{id}` | 是 | 删除一条饮食记录 |
+| POST | `/api/assistant/messages` | 是 | 向饮食助手发送一条消息 |
 
 「需登录」的接口在未登录时一律返回 `401 unauthenticated`。
 
@@ -409,10 +413,56 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 再在前端按日期分组显示摘要。跨午夜的行程在它覆盖的每一天都显示。
 
-## 9. 后续阶段预留（本阶段不实现）
+## 9. 饮食助手（阶段 4a）
 
-- `POST /api/recommendations`：Ask AI 首轮推荐与追问（阶段 4a/4b）。路径和格式在阶段 4 另行约定。
-- 阶段 2 中前端的 Ask AI 入口为禁用状态，不调用任何接口。
+术语见 GLOSSARY.md，行为约定见 project-review.md 3.6 和第 4 节。
+
+### 9.1 `POST /api/assistant/messages`
+
+需要登录和 CSRF（同其他写接口）。一次请求就是一轮：发送一条消息，同步返回回复（最长约 30 秒，前端显示加载状态）。
+
+请求体：
+
+| 字段 | 类型 | 规则 |
+|---|---|---|
+| `date` | 日期 | 必填；目标日期，即日历上选中的日期 |
+| `message` | string | 必填；去空白后 1–500 个字符 |
+
+成功 `200`：
+
+```json
+{
+  "reply": "今天下午有课，推荐三个耐饿的方案：",
+  "recommendations": [
+    { "name": "鸡胸肉便当", "description": "鸡胸肉配糙米", "reason": "下午有 3 小时的课" }
+  ],
+  "ask_meal_type": false
+}
+```
+
+- `reply`：必有的回复文字。
+- `recommendations`：空数组，或正好 3 个（示例为了简短只写了 1 个）。
+- `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
+
+错误：`401`、`403`、`422`（`date` 或 `message` 不合规则）、`429 rate_limited`（调用额度用完）、`503 ai_unavailable`。
+
+### 9.2 调用额度
+
+- 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天 30 条，全站每天 300 条，可通过环境变量调整。
+- 额度在调用 AI 服务前检查并占用；用完时返回 `429 rate_limited`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。
+- 返回 `503 ai_unavailable` 的消息退还额度。
+
+### 9.3 内部接口（只供 AI 服务调用）
+
+Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手查询工具使用的只读接口。Nginx 不转发它们，容器方式下该端口也不映射到宿主机。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/internal/agent/meals?from=&to=` | 同 7.2，但最多 31 天 |
+| GET | `/internal/agent/events?from=&to=` | 同 6.2，但最多 31 天 |
+
+- 认证：`Authorization: Bearer <令牌>`。令牌由 Go 在每条消息开始时签发，随请求传给 AI 服务，只对这一个用户有效，60 秒后过期。签名密钥在 Go 启动时随机生成，只保存在内存中。令牌无效时返回 `401 unauthenticated`。
+- Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`SubmitReply`）。
 
 ## 10. 设计决定
 

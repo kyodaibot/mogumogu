@@ -217,3 +217,52 @@ func (s *Store) DeleteMeal(ctx context.Context, userID, id int64) error {
 	}
 	return nil
 }
+
+// --- assistant usage quota ---
+
+// ErrQuotaExceeded is returned by TakeAssistantQuota when the user's or the
+// site's daily limit is used up.
+var ErrQuotaExceeded = errors.New("assistant quota exceeded")
+
+// assistantQuotaLock is the advisory lock key that serialises quota checks, so
+// two concurrent messages cannot both take the last unit. Any fixed number
+// works; 6 is the migration that added the table.
+const assistantQuotaLock = 6
+
+// TakeAssistantQuota counts one message for the user on day if neither the
+// user's nor the site's total for that day has reached its limit.
+func (s *Store) TakeAssistantQuota(ctx context.Context, userID int64, day time.Time, perUser, site int) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", assistantQuotaLock).Error; err != nil {
+			return err
+		}
+		var used struct{ Site, User int }
+		err := tx.Raw(
+			`SELECT COALESCE(SUM(messages), 0) AS site,
+			        COALESCE(SUM(messages) FILTER (WHERE user_id = ?), 0) AS "user"
+			   FROM assistant_usage WHERE day = ?`,
+			userID, day,
+		).Scan(&used).Error
+		if err != nil {
+			return err
+		}
+		if used.User >= perUser || used.Site >= site {
+			return ErrQuotaExceeded
+		}
+		return tx.Exec(
+			`INSERT INTO assistant_usage (day, user_id, messages) VALUES (?, ?, 1)
+			 ON CONFLICT (day, user_id) DO UPDATE SET messages = assistant_usage.messages + 1`,
+			day, userID,
+		).Error
+	})
+}
+
+// RefundAssistantQuota gives back one message taken on day, after the
+// assistant failed to answer it.
+func (s *Store) RefundAssistantQuota(ctx context.Context, userID int64, day time.Time) error {
+	return s.db.WithContext(ctx).Exec(
+		`UPDATE assistant_usage SET messages = messages - 1
+		  WHERE day = ? AND user_id = ? AND messages > 0`,
+		day, userID,
+	).Error
+}
