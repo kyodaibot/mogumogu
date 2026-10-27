@@ -22,6 +22,14 @@ backend/bin/
 __pycache__/
 .pytest_cache/
 
+# Terraform: provider cache, state (may hold resource details) and real
+# variable values. .terraform.lock.hcl and *.tfvars.example are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+
 # OS
 .DS_Store
 
