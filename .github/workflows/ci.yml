@@ -92,7 +92,28 @@ jobs:
       - run: npm test
       - run: TZ=Asia/Tokyo npm test
 
-  # Builds both images the way compose does (repo root as context). Not pushed.
+  # Agent tests with the fake model only: no AWS credentials, no cost.
+  ai:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ai
+    env:
+      UV_VERSION: 0.12.23
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv (same version as ai/Dockerfile)
+        run: |
+          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Fails if uv.lock does not match pyproject.toml.
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  # Builds the images the way compose does (repo root as context). Not pushed.
   docker:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -102,3 +123,4 @@ jobs:
           persist-credentials: false
       - run: docker build -f backend/Dockerfile -t mogumogu-backend:ci .
       - run: docker build -f frontend/Dockerfile -t mogumogu-web:ci .
+      - run: docker build -f ai/Dockerfile -t mogumogu-ai:ci .

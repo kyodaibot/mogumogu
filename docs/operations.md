@@ -39,6 +39,7 @@
 | 后端运行 | `gcr.io/distroless/static-debian12:nonroot` |
 | 前端构建 | `node:24-alpine` |
 | 前端运行（Nginx） | `nginx:1.28-alpine` |
+| AI 服务构建与运行 | `python:3.14.7-slim`；uv 取自 `ghcr.io/astral-sh/uv:0.12.23` |
 | 数据库 | `postgres:17.11` |
 
 **版本标签和镜像摘要（digest）的区别**：标签（如 `nginx:1.28-alpine`）是一个名字，镜像发布方可以把它重新指向新的内容，例如修复安全问题后重新构建，所以同一个标签在不同时间拉取，得到的镜像可能不同。摘要（如 `nginx@sha256:…`）是镜像内容的哈希，永远指向同一份内容，可以保证构建完全可复现，但不会自动获得修复，需要手动更新。本阶段只使用明确的版本标签，不使用 `latest`。需要更严格的可复现性时（例如阶段 5 的 AWS 部署），再改为固定摘要。
@@ -54,9 +55,10 @@
 | `secrets` | 用 gitleaks（与 pre-commit 同版本）扫描全部提交历史，输出中隐去发现的内容 |
 | `backend` | `go vet`、`go test`；带一个临时 PostgreSQL，集成测试会真正执行。CI 中缺少测试数据库时，集成测试会失败而不是跳过 |
 | `frontend` | `npm ci`、`npm run build`、`npm test`（UTC 和 Asia/Tokyo 各一次） |
-| `docker` | 构建后端和前端镜像，不推送 |
+| `ai` | 安装固定版本的 uv，`uv sync --locked`（锁文件与 pyproject.toml 不一致时失败）、`pytest`。只用假模型，不需要 AWS 凭证 |
+| `docker` | 构建后端、前端和 AI 服务的镜像，不推送 |
 
-CI 失败时 GitHub 默认仍允许合并。要强制「通过后才能合并」，在仓库的 Settings → Branches 中为 `dev` 和 `master` 添加保护规则，把这 4 个 job 设为必须通过的检查。
+CI 失败时 GitHub 默认仍允许合并。要强制「通过后才能合并」，在仓库的 Settings → Branches 中为 `dev` 和 `master` 添加保护规则，把这 5 个 job 设为必须通过的检查。
 
 ## 5. 备份与恢复
 

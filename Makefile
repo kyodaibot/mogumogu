@@ -5,22 +5,26 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 BACKEND_BIN := backend/bin/server
+# The AI service listens here on the host; matches the backend's default AI_SERVICE_URL.
+AI_PORT := 8090
 # Export the repo-root .env for the command that follows. Each recipe line runs
 # in its own shell, so the variables never reach your terminal.
 WITH_ENV := set -a; . ./.env; set +a;
 
 .PHONY: help setup check-env db db-stop db-down migrate-up migrate-down migrate-version migrate-create \
-	backend backend-build frontend dev test test-integration test-e2e app-up app-down app-logs db-backup
+	backend backend-build frontend ai ai-eval dev test test-integration test-e2e app-up app-down app-logs db-backup
 
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "  setup             First-time setup: create .env (with generated secrets) if missing, npm ci, pre-commit install"
-	@echo "  dev               Start database, apply migrations, then backend + frontend together (Ctrl+C stops both)"
+	@echo "  dev               Start database, apply migrations, then backend + AI service + frontend together (Ctrl+C stops all)"
 	@echo "  db                Start PostgreSQL in the background and wait until healthy"
 	@echo "  backend           Build and run the Go backend in the foreground (:8080)"
 	@echo "  frontend          Run the Vite dev server in the foreground (http://localhost:5173)"
-	@echo "  test              Unit tests and builds: go vet, go test, npm run build, npm test"
+	@echo "  ai                Run the AI service in the foreground (127.0.0.1:$(AI_PORT); needs AWS credentials, see README)"
+	@echo "  ai-eval           Run the meal assistant's eval cases against the real model (costs a few cents)"
+	@echo "  test              Unit tests and builds: go vet, go test, pytest, npm run build, npm test"
 	@echo "  test-integration  Backend tests against PostgreSQL (needs 'make db'; uses throwaway databases)"
 	@echo "  test-e2e          Browser test of the whole UI in headless Chrome (throwaway database, ports 18080/15173)"
 	@echo "  migrate-up        Apply all pending migrations"
@@ -82,28 +86,41 @@ backend: check-env backend-build
 frontend: frontend/node_modules
 	cd frontend && npm run dev
 
-# Backend and frontend run as background jobs of one shell. On Ctrl+C the
-# terminal already delivers SIGINT to the backend (Go re-enables it), so the
-# INT trap only stops the frontend. The backend must get a single signal:
-# a second one makes it exit immediately instead of shutting down gracefully.
-# If either process exits on its own, the other is stopped too.
+# The AI service reads MODEL_PROVIDER, BEDROCK_MODEL_ID and AWS_PROFILE from .env;
+# AWS credentials themselves come from `aws login`, never from .env.
+AI_RUN := cd ai && GO_INTERNAL_URL="http://127.0.0.1:$${INTERNAL_PORT:-8081}" \
+	exec uv run uvicorn mogumogu_ai.app:app --host 127.0.0.1 --port $(AI_PORT) --no-access-log
+
+ai: check-env
+	@$(WITH_ENV) $(AI_RUN)
+
+ai-eval: check-env
+	@$(WITH_ENV) cd ai && uv run python evals/run_evals.py
+
+# Backend, AI service and frontend run as background jobs of one shell. On
+# Ctrl+C the terminal already delivers SIGINT to the backend (Go re-enables
+# it) and to uvicorn, so the INT trap only stops the frontend. Both must get a
+# single signal: a second one makes them exit immediately instead of shutting
+# down gracefully. If any process exits on its own, the others are stopped too.
 # The database keeps running.
 dev: db migrate-up backend-build frontend/node_modules
-	@echo "Backend :8080, frontend http://localhost:5173 - Ctrl+C stops both (database keeps running)"
+	@echo "Backend :8080, AI service :$(AI_PORT), frontend http://localhost:5173 - Ctrl+C stops all three (database keeps running)"
 	@($(WITH_ENV) exec ./$(BACKEND_BIN)) & be=$$!; \
+	($(WITH_ENV) $(AI_RUN)) & ai=$$!; \
 	(cd frontend && exec npm run dev) & fe=$$!; \
 	stopping=; \
 	trap 'stopping=1; kill -TERM $$fe 2>/dev/null' INT; \
-	trap 'stopping=1; kill -TERM $$be $$fe 2>/dev/null' TERM; \
-	while kill -0 $$be 2>/dev/null && kill -0 $$fe 2>/dev/null; do sleep 1; done; \
-	[ -n "$$stopping" ] || kill -TERM $$be $$fe 2>/dev/null; \
+	trap 'stopping=1; kill -TERM $$be $$ai $$fe 2>/dev/null' TERM; \
+	while kill -0 $$be 2>/dev/null && kill -0 $$ai 2>/dev/null && kill -0 $$fe 2>/dev/null; do sleep 1; done; \
+	[ -n "$$stopping" ] || kill -TERM $$be $$ai $$fe 2>/dev/null; \
 	wait; \
-	[ -n "$$stopping" ] || { echo "backend or frontend exited unexpectedly; stopped the other one"; exit 1; }
+	[ -n "$$stopping" ] || { echo "backend, AI service or frontend exited unexpectedly; stopped the others"; exit 1; }
 
 # Integration tests skip themselves here because TEST_DATABASE_URL is unset.
 # Frontend tests run twice to prove dates do not depend on the machine's zone.
 test: frontend/node_modules
 	cd backend && go vet ./... && go test ./...
+	cd ai && uv run pytest -q
 	cd frontend && npm run build && npm test && TZ=UTC npm test
 
 # Each test creates and drops its own mogumogu_test_* database on the compose

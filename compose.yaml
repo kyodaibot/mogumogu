@@ -1,6 +1,8 @@
 # `docker compose up -d` (and `make db`) starts only postgres, for `make dev`.
 # The `app` profile adds the container setup: `make app-up` / `make app-down`.
 # Start order: postgres healthy -> migrate exits 0 -> backend healthy -> web.
+# The AI service (ai) starts alongside; backend and ai call each other only
+# while answering a message.
 
 services:
   postgres:
@@ -63,6 +65,11 @@ services:
       # Believe X-Forwarded-For only from containers on this network, that is
       # Nginx, which overwrites the header with the real client address.
       TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      AI_SERVICE_URL: http://ai:8090
+      # The internal API for the AI service's query tools; not published.
+      INTERNAL_PORT: "8081"
+      ASSISTANT_USER_DAILY_LIMIT: ${ASSISTANT_USER_DAILY_LIMIT:-}
+      ASSISTANT_SITE_DAILY_LIMIT: ${ASSISTANT_SITE_DAILY_LIMIT:-}
     healthcheck:
       test: ["CMD", "/server", "healthcheck"]
       interval: 5s
@@ -76,6 +83,32 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # The meal assistant's agent. No ports: only the backend calls it.
+  ai:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    image: mogumogu-ai:local
+    environment:
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_REGION: ap-northeast-1
+      GO_INTERNAL_URL: http://backend:8081
+    # Temporary credentials from `aws login` on your machine; nothing is copied
+    # into the image. The login cache must be writable: botocore saves the
+    # refreshed token there every 15 minutes or so.
+    volumes:
+      - ${HOME}/.aws/config:/home/app/.aws/config:ro
+      - ${HOME}/.aws/login:/home/app/.aws/login
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   web:
     profiles: [app]
