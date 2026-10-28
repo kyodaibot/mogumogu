@@ -31,7 +31,8 @@
   --ok: #2e7d4f;
   --ok-soft: #e4f2e8;
 
-  --font-text: system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  /* Japanese faces after the system font, so kana and kanji get Japanese glyph forms. */
+  --font-text: system-ui, -apple-system, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', Meiryo, sans-serif;
   /* Rounded figures for dates, times and amounts; falls back to the text face. */
   --font-num: ui-rounded, 'SF Pro Rounded', var(--font-text);
 

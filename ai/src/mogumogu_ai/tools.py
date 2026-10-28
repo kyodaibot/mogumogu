@@ -18,21 +18,23 @@ _DROP = {"id", "created_at", "updated_at"}
 
 
 class DateRangeArgs(BaseModel):
-    from_date: date = Field(description="开始日期 YYYY-MM-DD，包含")
-    to_date: date = Field(description="结束日期 YYYY-MM-DD，包含；与开始日期最多相差 31 天")
+    from_date: date = Field(description="Start date YYYY-MM-DD, inclusive")
+    to_date: date = Field(description="End date YYYY-MM-DD, inclusive; at most 31 days from the start date")
 
 
 GET_MEALS = ToolSpec(
     "get_meals",
-    "查询用户在日期范围内的饮食记录（包括已填写的营养信息）。只在需要初始上下文以外的日期时使用。",
+    "Get the user's meal records in a date range (with any nutrition filled in). Use only for dates outside the initial context.",
     DateRangeArgs,
 )
 GET_EVENTS = ToolSpec(
     "get_events",
-    "查询用户在日期范围内的行程。只在需要初始上下文以外的日期时使用。",
+    "Get the user's schedule events in a date range. Use only for dates outside the initial context.",
     DateRangeArgs,
 )
-SUBMIT_REPLY = ToolSpec("submit_reply", "提交给用户的最终回复。每条消息必须以调用它结束。", SubmitReply)
+SUBMIT_REPLY = ToolSpec(
+    "submit_reply", "Submit the final reply to the user. Every message must end with a call to it.", SubmitReply
+)
 
 QUERY_TOOLS = (GET_MEALS, GET_EVENTS)
 ALL_TOOLS = (*QUERY_TOOLS, SUBMIT_REPLY)
@@ -89,16 +91,19 @@ async def run_query(source: DataSource, name: str, args: dict, budget: QueryBudg
     try:
         parsed = DateRangeArgs.model_validate(args)
     except ValidationError as e:
-        return f"参数错误：{e.errors()[0]['msg']}"
+        return f"Invalid arguments: {e.errors()[0]['msg']}"
     start, end = parsed.from_date, parsed.to_date
     if end < start:
-        return "参数错误：to_date 不能早于 from_date"
+        return "Invalid arguments: to_date must not be before from_date"
     if (end - start).days + 1 > MAX_SPAN_DAYS:
-        return f"参数错误：一次最多查询 {MAX_SPAN_DAYS} 天"
+        return f"Invalid arguments: one query covers at most {MAX_SPAN_DAYS} days"
 
     kind = "meals" if name == GET_MEALS.name else "events"
     if not budget.take(kind, start, end):
-        return f"参数错误：每条消息累计最多查询 {MAX_SPAN_DAYS} 天的记录。请只根据最近 {MAX_SPAN_DAYS} 天回答，并说明这个限制"
+        return (
+            f"Invalid arguments: one message may read at most {MAX_SPAN_DAYS} days of records in total. "
+            f"Answer from the latest {MAX_SPAN_DAYS} days only, and mention this limit"
+        )
     items = await source.fetch(kind, start, end)
     rows = [{k: v for k, v in item.items() if k not in _DROP} for item in items]
     text = json.dumps(
@@ -107,5 +112,5 @@ async def run_query(source: DataSource, name: str, args: dict, budget: QueryBudg
         separators=(",", ":"),
     )
     if len(text) > MAX_RESULT_CHARS:
-        text = text[:MAX_RESULT_CHARS] + "…（结果过长已截断，请缩小日期范围）"
+        text = text[:MAX_RESULT_CHARS] + "… (result too long, truncated; narrow the date range)"
     return text

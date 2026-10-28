@@ -1,5 +1,6 @@
 // Browser end-to-end test: drives headless Chrome over the DevTools Protocol
-// through the whole UI (register, profile, calendar, logout, login).
+// through the whole UI (register, profile, calendar, logout, login), in
+// Japanese, then switches to English.
 //
 // Normally started by e2e/run.sh (`make test-e2e`), which provides a throwaway
 // database and servers. Every account it creates gets a random name, so runs
@@ -142,17 +143,21 @@ async function main() {
   await connect()
   await send('Network.enable')
   await send('Page.enable')
+  // A Japanese browser: the main flow runs in Japanese, picked automatically.
+  await send('Network.setUserAgentOverride', { userAgent: await evaluate('navigator.userAgent'), acceptLanguage: 'ja-JP,ja' })
   await send('Page.navigate', { url: BASE + '/' })
   await waitFor(`location.pathname === '/login'`, 'redirect to /login')
   check('unauthenticated visit to / redirects to /login', true)
+  check('a Japanese browser gets the Japanese interface', (await evaluate('document.documentElement.lang')) === 'ja' &&
+    (await bodyText()).includes('ログイン'))
 
   // --- register ---
   const username = 'e2e_ui_' + Math.random().toString(36).slice(2, 8)
-  await clickText('button', '注册')
+  await clickText('button', '新規登録')
   await fill('input[name=username]', username)
   await fill('input[name=password]', 'short')
   await click('form button[type=submit]')
-  await waitFor(`document.body.innerText.includes('至少 8 个字符')`, 'password field error')
+  await waitFor(`document.body.innerText.includes('8文字以上')`, 'password field error')
   check('register validation error shown under the field', true)
 
   await waitFor(`!!document.cookie.match(/mogumogu_csrf=v1\\.a\\./)`, 'anonymous csrf cookie')
@@ -165,7 +170,7 @@ async function main() {
   check('CSRF cookie rotated to a session token on register',
     anonCsrf?.startsWith('v1.a.') && sessionCsrf?.startsWith('v1.s.') && anonCsrf !== sessionCsrf,
     `${anonCsrf?.slice(0, 5)} -> ${sessionCsrf?.slice(0, 5)}`)
-  check('welcome banner on first profile', (await bodyText()).includes('欢迎'))
+  check('welcome banner on first profile', (await bodyText()).includes('ようこそ'))
 
   // Navigating to the calendar before having a profile bounces back.
   await evaluate(`history.pushState({}, '', '/'); dispatchEvent(new PopStateEvent('popstate'))`)
@@ -178,17 +183,17 @@ async function main() {
   check('empty profile shows required errors', true, `${await evaluate(`document.querySelectorAll('.field-error').length`)} field errors`)
   await fill('input[type=number][min="50"]', '301')
   await click('form button[type=submit]')
-  await waitFor(`document.body.innerText.includes('请输入 50–300 之间的数值')`, 'height range error')
+  await waitFor(`document.body.innerText.includes('50〜300の値を入力してください')`, 'height range error')
   check('out-of-range height shows range message', true)
 
   await fill('input[type=number][min="50"]', '172.5')
   await fill('input[type=number][min="10"][max="500"]', '65')
   await fill('input[type=number][max="120"]', '21')
-  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='有').querySelector('input').click()`)
-  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='增肌').querySelector('input').click()`)
-  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='有过敏原').querySelector('input').click()`)
+  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='ある').querySelector('input').click()`)
+  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='筋肉をつける').querySelector('input').click()`)
+  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='アレルゲンがある').querySelector('input').click()`)
   await settle()
-  await fill('input[placeholder^="例如：花生"]', '花生、虾')
+  await fill('input[placeholder^="例：ピーナッツ"]', 'ピーナッツ、えび')
   await click('form button[type=submit]')
   await waitFor(`location.pathname === '/'`, 'calendar after profile')
   check('saving the first profile opens the calendar', true)
@@ -200,19 +205,21 @@ async function main() {
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'today selected')
   check('calendar shows the current month with today selected', (await textOf('.month-nav h1')).includes(`${m}月`))
   const headers = await evaluate(`[...document.querySelectorAll('.weekday')].map(e => e.innerText)`)
-  check('week starts on Monday', headers[0] === '周一' && headers[6] === '周日', headers.join(' '))
+  check('week starts on Monday', headers[0] === '月' && headers[6] === '日', headers.join(' '))
 
   // --- meal assistant (the AI service runs with the fake model) ---
   check('old Ask AI button is gone', !(await evaluate(`!!${q('.ask-ai')}`)))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel .intro .chip')`, 'assistant panel with presets')
   const presets = await evaluate(`[...document.querySelectorAll('.panel .intro .chip')].map(e => e.innerText)`)
-  check('assistant opens with 4 preset questions for today', presets.length === 4 && presets[1] === '今天午餐吃什么？', presets.join(' / '))
-  await clickText('.panel .chip', '今天午餐吃什么？')
+  check('assistant opens with 4 preset questions for today', presets.length === 4 && presets[1] === '今日の昼食は何を食べたらいい？', presets.join(' / '))
+  await clickText('.panel .chip', '今日の昼食は何を食べたらいい？')
   await waitFor(`document.querySelectorAll('.panel .rec').length === 3`, 'three recommendation cards')
   const firstAsk = requests.find((r) => r.url === '/api/assistant/messages')
   check('preset question gets 3 recommendation cards; presets hidden',
     !(await evaluate(`!!${q('.panel .intro')}`)) && JSON.parse(firstAsk.body).date === today, firstAsk.body)
+  check('the question carries the interface language, and the reply is in it',
+    JSON.parse(firstAsk.body).locale === 'ja' && (await textOf('.panel .bubble.assistant')).startsWith('（テスト回答）'))
 
   await click('.panel .close')
   await waitFor(`!document.querySelector('.panel')`, 'panel closed')
@@ -224,58 +231,58 @@ async function main() {
   const tomorrowCellExpr = `[...document.querySelectorAll('.day')].find(d => d.classList.contains('today')).nextElementSibling`
   await evaluate(`(${tomorrowCellExpr}).click()`)
   await waitFor(`!document.querySelector('.panel .target .today-mark')`, 'panel follows the selected date')
-  await fill('#assistant-input', '那天吃什么？')
+  await fill('#assistant-input', 'その日は何を食べたらいい？')
   await click('.composer button[type=submit]')
   await waitFor(`document.querySelectorAll('.panel .follow-up .chip').length === 3`, 'meal choice buttons')
   const divider = await textOf('.panel .divider')
-  check('new date: divider shown, earlier messages kept', divider.startsWith('以下关于') && (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 3, divider)
-  await clickText('.panel .follow-up .chip', '明天晚餐吃什么？')
+  check('new date: divider shown, earlier messages kept', divider.startsWith('ここから') && (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 3, divider)
+  await clickText('.panel .follow-up .chip', '明日の夕食は何を食べたらいい？')
   await waitFor(`document.querySelectorAll('.panel .rec').length === 6`, 'recommendations for tomorrow')
   const asks = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body))
   check('each message carries its own target date',
-    asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明天晚餐吃什么？',
+    asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明日の夕食は何を食べたらいい？',
     asks.map((a) => `${a.date} ${a.message}`).join(' | '))
   await click('.panel .close')
-  await clickText('button', '今天')
+  await clickText('button', '今日')
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'back to today')
 
   // Overnight event on today -> appears on today and tomorrow.
-  await clickText('button', '+ 新增行程')
+  await clickText('button', '+ 予定を追加')
   await waitFor(`!!document.querySelector('input[type=datetime-local]')`, 'event form')
-  await fill('.form input[maxlength="100"]', 'E2E 夜间实验')
+  await fill('.form input[maxlength="100"]', 'E2E 夜間の実験')
   const dt = await evaluate(`[...document.querySelectorAll('input[type=datetime-local]')].map(e=>e.value)`)
   check('new event defaults to the selected date', dt[0] === `${today}T09:00`, dt[0])
   await evaluate(`(() => { const [s,e] = document.querySelectorAll('input[type=datetime-local]'); s.value='${today}T10:00'; s.dispatchEvent(new Event('input',{bubbles:true})); e.value='${today}T09:00'; e.dispatchEvent(new Event('input',{bubbles:true})) })()`)
   await clickText('button', '保存')
-  await waitFor(`document.body.innerText.includes('结束时间必须晚于开始时间')`, 'end before start error')
+  await waitFor(`document.body.innerText.includes('終了は開始より後にしてください')`, 'end before start error')
   check('end-before-start error shown on the field', true)
   await evaluate(`(() => { const [s,e] = document.querySelectorAll('input[type=datetime-local]'); s.value='${today}T23:00'; s.dispatchEvent(new Event('input',{bubbles:true})); e.value='${tomorrow}T01:00'; e.dispatchEvent(new Event('input',{bubbles:true})) })()`)
   await clickText('button', '保存')
-  await waitFor(`document.body.innerText.includes('E2E 夜间实验') && !document.querySelector('input[type=datetime-local]')`, 'event saved')
+  await waitFor(`document.body.innerText.includes('E2E 夜間の実験') && !document.querySelector('input[type=datetime-local]')`, 'event saved')
   const badgeToday = await evaluate(`document.querySelector('.day.today .badge.event')?.innerText`)
   const tomorrowCell = `[...document.querySelectorAll('.day')].find(d => d.getAttribute('aria-label') && d.classList.contains('today')).nextElementSibling`
   const badgeTomorrow = await evaluate(`(${tomorrowCell})?.querySelector('.badge.event')?.innerText`)
-  check('overnight event shown on today and tomorrow', badgeToday === '行程 1' && badgeTomorrow === '行程 1', `${badgeToday} / ${badgeTomorrow}`)
+  check('overnight event shown on today and tomorrow', badgeToday === '予定 1' && badgeTomorrow === '予定 1', `${badgeToday} / ${badgeTomorrow}`)
   check('overnight event time shows the next date', (await textOf('.items .time')).includes('23:00 – '))
 
   // Meal with unknown calories and zero protein.
-  await clickText('button', '+ 新增记录')
+  await clickText('button', '+ 記録を追加')
   await waitFor(`!!document.querySelector('select')`, 'meal form')
   await fill('select', 'lunch')
-  await fill('.form input[maxlength="200"]', 'E2E 鸡胸肉沙拉')
+  await fill('.form input[maxlength="200"]', 'E2E サラダチキン')
   await evaluate(`(() => { const ins = document.querySelectorAll('.nutrients input'); ins[1].value='0'; ins[1].dispatchEvent(new Event('input',{bubbles:true})) })()`)
   await clickText('button', '保存')
-  await waitFor(`document.body.innerText.includes('E2E 鸡胸肉沙拉') && !document.querySelector('select')`, 'meal saved')
+  await waitFor(`document.body.innerText.includes('E2E サラダチキン') && !document.querySelector('select')`, 'meal saved')
   const nutrients = await textOf('.meal-group .nutrients')
-  check('blank calories shown as 未填写, zero protein as 0', nutrients.includes('热量 未填写') && nutrients.includes('蛋白质 0 g'), nutrients.replace(/\n/g, ' | '))
+  check('blank calories shown as not entered, zero protein as 0', nutrients.includes('エネルギー 未入力') && nutrients.includes('たんぱく質 0 g'), nutrients.replace(/\n/g, ' | '))
 
   // Edit the meal.
-  await evaluate(`[...document.querySelectorAll('.meal-group button.link')].find(b => b.innerText==='编辑').click()`)
+  await evaluate(`[...document.querySelectorAll('.meal-group button.link')].find(b => b.innerText==='編集').click()`)
   await waitFor(`!!document.querySelector('select')`, 'meal edit form')
   check('edit form keeps blank nutrition blank', (await evaluate(`document.querySelectorAll('.nutrients input')[0].value`)) === '')
-  await fill('.form input[maxlength="200"]', 'E2E 鸡胸肉沙拉（大份）')
+  await fill('.form input[maxlength="200"]', 'E2E サラダチキン（大盛り）')
   await clickText('button', '保存')
-  await waitFor(`document.body.innerText.includes('E2E 鸡胸肉沙拉（大份）') && !document.querySelector('select')`, 'meal edited')
+  await waitFor(`document.body.innerText.includes('E2E サラダチキン（大盛り）') && !document.querySelector('select')`, 'meal edited')
   check('meal edited', true)
 
   // Persistence: reload. Page.reload returns before the new document exists, so
@@ -283,7 +290,7 @@ async function main() {
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
-    document.body.innerText.includes('E2E 夜间实验') && document.body.innerText.includes('（大份）')`, 'data after reload')
+    document.body.innerText.includes('E2E 夜間の実験') && document.body.innerText.includes('（大盛り）')`, 'data after reload')
   check('data still there after reload', true)
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
@@ -293,13 +300,13 @@ async function main() {
   // Delete the event (accept the confirm dialog).
   await evaluate(`window.confirm = () => true`)
   await evaluate(`[...document.querySelectorAll('.items button.link.danger')][0].click()`)
-  await waitFor(`!document.body.innerText.includes('E2E 夜间实验')`, 'event deleted')
-  check('event deleted after confirmation', (await bodyText()).includes('这一天还没有行程'))
+  await waitFor(`!document.body.innerText.includes('E2E 夜間の実験')`, 'event deleted')
+  check('event deleted after confirmation', (await bodyText()).includes('この日の予定はまだありません'))
 
   // Profile page shows the saved values.
-  await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='Profile').click()`)
-  await waitFor(`location.pathname === '/profile' && !!document.querySelector('input[placeholder^="例如：花生"]')`, 'profile with allergens')
-  check('profile keeps allergens', (await evaluate(`${q('input[placeholder^="例如：花生"]')}.value`)) === '花生、虾')
+  await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='プロフィール').click()`)
+  await waitFor(`location.pathname === '/profile' && !!document.querySelector('input[placeholder^="例：ピーナッツ"]')`, 'profile with allergens')
+  check('profile keeps allergens', (await evaluate(`${q('input[placeholder^="例：ピーナッツ"]')}.value`)) === 'ピーナッツ、えび')
 
   // CSRF: every write after registration used the session token, none failed.
   const writes = requests.filter((r) => r.method !== 'GET')
@@ -311,7 +318,7 @@ async function main() {
 
   // Logout: old session cookie stops working.
   const oldSession = await getCookie('mogumogu_session')
-  await clickText('button', '退出')
+  await clickText('button', 'ログアウト')
   await waitFor(`location.pathname === '/login'`, 'login after logout')
   const csrfAfterLogout = await getCookie('mogumogu_csrf')
   const res = await fetch(BASE + '/api/auth/me', { headers: { Cookie: `mogumogu_session=${oldSession}` } })
@@ -324,6 +331,29 @@ async function main() {
   await click('form button[type=submit]')
   await waitFor(`location.pathname === '/'`, 'calendar after login')
   check('login (case-insensitive username) goes straight to the calendar', true)
+
+  // --- switch to English; the choice outlives a reload ---
+  await click('.locale-switch button[lang=en]')
+  await settle()
+  const navEn = await evaluate(`[...document.querySelectorAll('nav a')].map(a => a.innerText)`)
+  const headersEn = await evaluate(`[...document.querySelectorAll('.weekday')].map(e => e.innerText)`)
+  check('switching to English changes the interface at once',
+    (await evaluate('document.documentElement.lang')) === 'en' && navEn[0] === 'Calendar' && headersEn[0] === 'Mon',
+    `${navEn.join(' ')} / ${headersEn.join(' ')}`)
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel .intro .chip')`, 'English presets')
+  const presetsEn = await evaluate(`[...document.querySelectorAll('.panel .intro .chip')].map(e => e.innerText)`)
+  check('assistant presets follow the language', presetsEn[1] === 'What should I eat for lunch today?', presetsEn.join(' / '))
+  await clickText('.panel .chip', 'What should I eat for lunch today?')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 3`, 'English recommendations')
+  const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
+  check('an English question asks for, and gets, an English reply',
+    JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
+  await evaluate('window.__beforeReload = true')
+  await send('Page.reload')
+  await waitFor(`!window.__beforeReload && !!document.querySelector('.day.today')`, 'calendar after reload')
+  check('the language choice is kept after a reload, over the browser language',
+    (await evaluate('document.documentElement.lang')) === 'en' && (await bodyText()).includes('Calendar'))
 }
 
 try {

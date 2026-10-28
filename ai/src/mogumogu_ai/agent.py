@@ -52,13 +52,16 @@ def check_reply(args: dict, allergens: list[str]) -> SubmitReply | str:
     try:
         parsed = SubmitReply.model_validate(args)
     except ValidationError as e:
-        return "；".join(f"{'.'.join(map(str, err['loc'])) or '参数'}: {err['msg']}" for err in e.errors()[:3])
-    # Only the obvious case: the allergen's name appears in what is shown on the card.
+        return "; ".join(f"{'.'.join(map(str, err['loc'])) or 'arguments'}: {err['msg']}" for err in e.errors()[:3])
+    # Only the obvious case: the allergen's name appears in what is shown on the
+    # card. An allergen written in another language than the reply (the user
+    # typed "えび", the card says "shrimp") is not caught here; the prompt's
+    # allergen rules are the guard for that.
     for rec in parsed.recommendations:
         text = f"{rec.name} {rec.description}".casefold()
         for allergen in allergens:
             if allergen.strip() and allergen.strip().casefold() in text:
-                return f"推荐「{rec.name}」包含用户的过敏原「{allergen}」，请换成不含它的方案"
+                return f"Recommendation \"{rec.name}\" contains the user's allergen \"{allergen}\"; replace it with an option without it"
     return parsed
 
 
@@ -97,23 +100,23 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str]):
         last = state["messages"][-1]
         # Coming straight from agent: its queries (if any) are not run.
         if isinstance(last, AIMessage):
-            new = _answer_pending(last, "不再查询。请根据已有信息调用 submit_reply 提交回复。")
+            new = _answer_pending(last, "No more queries. Call submit_reply with what you already have.")
         resp = await call_model([*state["messages"], *new], force_tool=SUBMIT_REPLY.name)
         return {"messages": [*new, resp], "steps": state["steps"] + 1}
 
     def validate(state: State):
         last = state["messages"][-1]
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
-        checked = check_reply(submit["args"], allergens) if submit else "没有调用 submit_reply"
+        checked = check_reply(submit["args"], allergens) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
             return {"result": checked}
         if state["retried"]:
             return {"error": "invalid_output"}
-        feedback = f"回复未通过校验：{checked}。请修正后重新调用 submit_reply。"
+        feedback = f"The reply failed validation: {checked}. Fix it and call submit_reply again."
         if submit:
             # Queries sent alongside submit_reply are ignored, not run.
             msgs = [
-                ToolMessage(feedback if c is submit else "已忽略。", tool_call_id=c["id"])
+                ToolMessage(feedback if c is submit else "Ignored.", tool_call_id=c["id"])
                 for c in last.tool_calls
             ]
         else:

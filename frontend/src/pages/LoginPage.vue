@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { session } from '../session'
 import { errorMessage, fieldMessages } from '../lib/messages'
 import { MEAL_TYPES } from '../lib/meals'
+import { t } from '../i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,7 +15,7 @@ const submitting = ref(false)
 const error = ref('')
 const fields = ref<Record<string, string>>({})
 
-const title = computed(() => (mode.value === 'login' ? '登录' : '注册'))
+const title = computed(() => (mode.value === 'login' ? t.value.login.login : t.value.login.register))
 
 function switchMode(next: 'login' | 'register') {
   mode.value = next
@@ -47,28 +48,28 @@ async function submit() {
   <main class="login">
     <section class="intro">
       <div class="big-tray" aria-hidden="true">
-        <span v-for="t in MEAL_TYPES" :key="t.value" class="slot" :class="t.value">{{ t.label }}</span>
+        <span v-for="m in MEAL_TYPES" :key="m.value" class="slot" :class="m.value">{{ m.label }}</span>
       </div>
-      <h1>今天吃了什么？</h1>
-      <p>把每天的行程和三餐记在日历上。哪一餐还没记，一眼就能看出来。</p>
+      <h1>{{ t.login.headline }}</h1>
+      <p>{{ t.login.intro }}</p>
     </section>
 
     <section class="panel">
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" :aria-selected="mode === 'login'" :class="{ active: mode === 'login' }" @click="switchMode('login')">登录</button>
-        <button type="button" role="tab" :aria-selected="mode === 'register'" :class="{ active: mode === 'register' }" @click="switchMode('register')">注册</button>
+        <button type="button" role="tab" :aria-selected="mode === 'login'" :class="{ active: mode === 'login' }" @click="switchMode('login')">{{ t.login.login }}</button>
+        <button type="button" role="tab" :aria-selected="mode === 'register'" :class="{ active: mode === 'register' }" @click="switchMode('register')">{{ t.login.register }}</button>
       </div>
 
       <form class="card form" :aria-label="title" novalidate @submit.prevent="submit">
         <label>
-          用户名
+          {{ t.login.username }}
           <input v-model="form.username" name="username" autocomplete="username" required />
-          <small v-if="mode === 'register' && !fields.username" class="hint">3–32 个字符，字母、数字或下划线，不区分大小写</small>
+          <small v-if="mode === 'register' && !fields.username" class="hint">{{ t.login.usernameHint }}</small>
           <small v-if="fields.username" class="field-error">{{ fields.username }}</small>
         </label>
 
         <label>
-          密码
+          {{ t.login.password }}
           <input
             v-model="form.password"
             type="password"
@@ -76,14 +77,14 @@ async function submit() {
             :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
             required
           />
-          <small v-if="mode === 'register' && !fields.password" class="hint">8–128 个字符</small>
+          <small v-if="mode === 'register' && !fields.password" class="hint">{{ t.login.passwordHint }}</small>
           <small v-if="fields.password" class="field-error">{{ fields.password }}</small>
         </label>
 
         <p v-if="error" class="banner error" role="alert">{{ error }}</p>
 
         <button type="submit" class="primary" :disabled="submitting">
-          {{ submitting ? '请稍候…' : title }}
+          {{ submitting ? t.login.wait : title }}
         </button>
       </form>
     </section>
@@ -106,6 +107,9 @@ async function submit() {
 .intro h1 {
   font-size: var(--fs-display);
   letter-spacing: -0.01em;
+  /* Japanese has no spaces: break between phrases, not inside a word. */
+  word-break: auto-phrase;
+  text-wrap: balance;
   margin: 2rem 0 0.75rem;
 }
 

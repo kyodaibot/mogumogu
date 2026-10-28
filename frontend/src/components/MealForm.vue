@@ -4,6 +4,7 @@ import { api, type MealRecord, type MealType } from '../api'
 import type { Ymd } from '../lib/date'
 import { MEAL_TYPES, NUTRIENTS } from '../lib/meals'
 import { errorMessage, fieldMessages } from '../lib/messages'
+import { t } from '../i18n'
 
 const props = defineProps<{
   /** Record to edit, or null to create one on `date`. */
@@ -61,38 +62,38 @@ async function save() {
 
 <template>
   <form class="card form compact" novalidate @submit.prevent="save">
-    <h3>{{ meal ? '编辑饮食记录' : '新增饮食记录' }}</h3>
+    <h3>{{ meal ? t.mealForm.editTitle : t.mealForm.newTitle }}</h3>
     <div class="row">
       <label>
-        日期
+        {{ t.mealForm.date }}
         <input v-model="form.date" type="date" />
         <small v-if="fields.date" class="field-error">{{ fields.date }}</small>
       </label>
       <label>
-        餐次
+        {{ t.mealForm.mealType }}
         <select v-model="form.meal_type">
-          <option v-for="t in MEAL_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+          <option v-for="m in MEAL_TYPES" :key="m.value" :value="m.value">{{ m.label }}</option>
         </select>
         <small v-if="fields.meal_type" class="field-error">{{ fields.meal_type }}</small>
       </label>
     </div>
     <label>
-      吃了什么
-      <input v-model="form.content" maxlength="200" placeholder="例如：鸡胸肉沙拉" />
+      {{ t.mealForm.content }}
+      <input v-model="form.content" maxlength="200" :placeholder="t.mealForm.contentPlaceholder" />
       <small v-if="fields.content" class="field-error">{{ fields.content }}</small>
     </label>
     <div class="row nutrients">
       <label v-for="n in NUTRIENTS" :key="n.key">
-        {{ n.label }}（{{ n.unit }}）
-        <input v-model.number="form[n.key]" type="number" inputmode="decimal" step="0.1" min="0" placeholder="未填写" />
+        {{ t.nutrients.withUnit(n.label, n.unit) }}
+        <input v-model.number="form[n.key]" type="number" inputmode="decimal" step="0.1" min="0" :placeholder="t.nutrients.notEntered" />
         <small v-if="fields[n.key]" class="field-error">{{ fields[n.key] }}</small>
       </label>
     </div>
-    <small class="hint">营养数值填写这一份实际吃下的总量；不知道可以留空（留空不等于 0）。</small>
+    <small class="hint">{{ t.mealForm.nutritionHint }}</small>
     <p v-if="error" class="banner error" role="alert">{{ error }}</p>
     <div class="actions">
-      <button type="submit" class="primary" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button>
-      <button type="button" :disabled="saving" @click="emit('cancel')">取消</button>
+      <button type="submit" class="primary" :disabled="saving">{{ saving ? t.common.saving : t.common.save }}</button>
+      <button type="button" :disabled="saving" @click="emit('cancel')">{{ t.common.cancel }}</button>
     </div>
   </form>
 </template>

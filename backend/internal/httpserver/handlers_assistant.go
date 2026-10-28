@@ -31,6 +31,9 @@ type Replier interface {
 type assistantInput struct {
 	Date    *string `json:"date"`
 	Message *string `json:"message"`
+	// Language of the interface, which the reply follows: "ja" or "en".
+	// Optional; English when absent.
+	Locale *string `json:"locale"`
 }
 
 // postAssistantMessage answers one message to the meal assistant
@@ -51,6 +54,15 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		target = d
 	}
 	message := v.text("message", in.Message, 1, 500)
+	locale := "en"
+	if in.Locale != nil {
+		switch *in.Locale {
+		case "ja", "en":
+			locale = *in.Locale
+		default:
+			v.add("locale", "invalid_value")
+		}
+	}
 	if v.failed() {
 		abortValidation(c, v.errs)
 		return
@@ -69,7 +81,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		return
 	}
 
-	reply, err := a.askAssistant(ctx, sess.UserID, target, message, now)
+	reply, err := a.askAssistant(ctx, sess.UserID, target, message, locale, now)
 	if err != nil {
 		// The message was not answered, so it does not count. The request may
 		// have been cancelled; the refund must still happen.
@@ -85,7 +97,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 
 // askAssistant assembles the initial context (project-review 3.6) and calls
 // the AI service.
-func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, message string, now time.Time) (assistant.Reply, error) {
+func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, message, locale string, now time.Time) (assistant.Reply, error) {
 	var profile any
 	p, err := a.store.GetProfile(ctx, userID)
 	switch {
@@ -128,6 +140,7 @@ func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, me
 			TargetDate:  target.String(),
 			Now:         tz.FormatInstant(now),
 			Timezone:    tz.Tokyo.String(),
+			Locale:      locale,
 			Profile:     profile,
 			Events:      eventItems,
 			EventsRange: assistant.Range{From: evFrom.String(), To: evTo.String()},
