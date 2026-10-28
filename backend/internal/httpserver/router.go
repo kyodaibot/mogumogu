@@ -32,6 +32,22 @@ type Deps struct {
 	RegisterLimiter *auth.Limiter
 	AllowedOrigins  []string
 	CookieSecure    bool
+	// TrustedProxies are the peers whose X-Forwarded-For is believed (see
+	// config.Config). Nil means ClientIP is always the TCP peer.
+	TrustedProxies []string
+	// The meal assistant: the AI service, the tokens its query tools use, and
+	// the daily message quota per user and for the whole site.
+	Assistant          Replier
+	AgentTokens        *auth.AgentTokens
+	AssistantUserLimit int
+	AssistantSiteLimit int
+}
+
+// InternalDeps are the internal router's collaborators.
+type InternalDeps struct {
+	Logger      *slog.Logger
+	Store       *store.Store
+	AgentTokens *auth.AgentTokens
 }
 
 type api struct {
@@ -43,6 +59,11 @@ type api struct {
 	registerLimiter *auth.Limiter
 	allowedOrigins  []string
 	cookieSecure    bool
+
+	assistant          Replier
+	agentTokens        *auth.AgentTokens
+	assistantUserLimit int
+	assistantSiteLimit int
 }
 
 func init() {
@@ -53,10 +74,17 @@ func init() {
 // NewRouter returns the Gin engine with all routes registered.
 func NewRouter(d Deps) *gin.Engine {
 	r := gin.New()
-	// No proxy is trusted yet, so ClientIP is always the TCP peer and clients
-	// cannot spoof X-Forwarded-For to dodge rate limits. Phase 3 configures Nginx.
-	_ = r.SetTrustedProxies(nil)
+	// ClientIP keys the rate limits. It reads X-Forwarded-For only when the TCP
+	// peer is a trusted proxy (Nginx, which overwrites the header with the real
+	// client address); otherwise it is the TCP peer, so clients cannot spoof it.
+	// X-Real-IP is never read.
+	r.RemoteIPHeaders = []string{"X-Forwarded-For"}
+	if err := r.SetTrustedProxies(d.TrustedProxies); err != nil {
+		panic("invalid trusted proxies (config validates them): " + err.Error())
+	}
 	r.Use(requestLogger(d.Logger), gin.Recovery())
+	// Unknown paths get the same JSON error as missing resources.
+	r.NoRoute(abortNotFound)
 
 	health := r.Group("/api/health")
 	health.GET("/live", live)
@@ -66,6 +94,8 @@ func NewRouter(d Deps) *gin.Engine {
 		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
 		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter,
 		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
+		assistant: d.Assistant, agentTokens: d.AgentTokens,
+		assistantUserLimit: d.AssistantUserLimit, assistantSiteLimit: d.AssistantSiteLimit,
 	}
 	app := r.Group("/api", a.resolveSession)
 
@@ -94,6 +124,23 @@ func NewRouter(d Deps) *gin.Engine {
 	private.PUT("/meal-records/:id", a.updateMeal)
 	private.DELETE("/meal-records/:id", a.deleteMeal)
 
+	private.POST("/assistant/messages", a.postAssistantMessage)
+
+	return r
+}
+
+// NewInternalRouter serves the read-only API the AI service's query tools call
+// (docs/api.md 9.3). It listens on its own port, which Nginx never forwards
+// to and which is not published outside the container network.
+func NewInternalRouter(d InternalDeps) *gin.Engine {
+	r := gin.New()
+	r.Use(requestLogger(d.Logger), gin.Recovery())
+	r.NoRoute(abortNotFound)
+
+	a := &api{logger: d.Logger, store: d.Store, agentTokens: d.AgentTokens}
+	agent := r.Group("/internal/agent", a.agentAuth)
+	agent.GET("/events", a.agentEvents)
+	agent.GET("/meals", a.agentMeals)
 	return r
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"mogumogu/backend/internal/assistant"
 	"mogumogu/backend/internal/auth"
 	"mogumogu/backend/internal/config"
 	"mogumogu/backend/internal/database"
@@ -22,6 +24,12 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	// `server healthcheck` is for container health checks: the distroless
+	// image has no shell or curl.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -51,6 +59,17 @@ func run(logger *slog.Logger) error {
 	}()
 	logger.Info("database pool configured", slog.Any("db", cfg.DB))
 	logger.Info("auth configured", slog.Any("auth", cfg.Auth))
+	logger.Info("client ip configured", slog.Any("trusted_proxies", cfg.TrustedProxies))
+	logger.Info("assistant configured",
+		slog.String("ai_service_url", cfg.Assistant.ServiceURL),
+		slog.Int("user_daily_limit", cfg.Assistant.UserLimit),
+		slog.Int("site_daily_limit", cfg.Assistant.SiteLimit))
+
+	agentTokens, err := auth.NewAgentTokens()
+	if err != nil {
+		return err
+	}
+	st := store.New(gormDB)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -60,25 +79,44 @@ func run(logger *slog.Logger) error {
 		Handler: httpserver.NewRouter(httpserver.Deps{
 			Logger:          logger,
 			DB:              sqlDB,
-			Store:           store.New(gormDB),
+			Store:           st,
 			Sessions:        auth.NewSessions(cfg.Auth.JWTSecret, cfg.Auth.JWTIssuer, cfg.Auth.JWTAudience, cfg.Auth.JWTTTL),
 			CSRF:            auth.NewCSRF(cfg.Auth.CSRFSecret),
 			LoginLimiter:    auth.NewLimiter(5, 15*time.Minute),
 			RegisterLimiter: auth.NewLimiter(10, time.Hour),
 			AllowedOrigins:  cfg.Auth.AllowedOrigins,
 			CookieSecure:    cfg.Auth.CookieSecure,
+			TrustedProxies:  cfg.TrustedProxies,
+
+			Assistant:          assistant.NewClient(cfg.Assistant.ServiceURL),
+			AgentTokens:        agentTokens,
+			AssistantUserLimit: cfg.Assistant.UserLimit,
+			AssistantSiteLimit: cfg.Assistant.SiteLimit,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	internalSrv := &http.Server{
+		Addr: net.JoinHostPort("", strconv.Itoa(cfg.InternalPort)),
+		Handler: httpserver.NewInternalRouter(httpserver.InternalDeps{
+			Logger: logger, Store: st, AgentTokens: agentTokens,
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	servers := []*http.Server{srv, internalSrv}
 
-	serveErr := make(chan error, 1)
-	go func() {
-		logger.Info("http server starting", slog.Int("port", cfg.AppPort))
-		serveErr <- srv.ListenAndServe()
-	}()
+	serveErr := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() {
+			logger.Info("http server starting", slog.String("addr", s.Addr))
+			serveErr <- s.ListenAndServe()
+		}()
+	}
 
 	select {
 	case err := <-serveErr:
+		for _, s := range servers {
+			s.Close()
+		}
 		return err
 	case <-ctx.Done():
 	}
@@ -89,12 +127,44 @@ func run(logger *slog.Logger) error {
 		slog.String("timeout", shutdownTimeout.String()))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return err
+	// Both drain together: an assistant request in flight on the public server
+	// still needs the internal one for its tool queries.
+	shutdownErr := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() { shutdownErr <- s.Shutdown(shutdownCtx) }()
 	}
-	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	for range servers {
+		if err := <-shutdownErr; err != nil {
+			return err
+		}
 	}
-	logger.Info("http server stopped")
+	for range servers {
+		if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	}
+	logger.Info("http servers stopped")
 	return nil
+}
+
+// healthcheck asks the running server's liveness endpoint and returns the
+// process exit code: 0 when it answers 200, 1 otherwise. It reads only
+// APP_PORT, so it needs none of the other settings.
+func healthcheck() int {
+	port := os.Getenv("APP_PORT")
+	if port == "" {
+		port = strconv.Itoa(config.DefaultAppPort)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", port) + "/api/health/live")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.StatusCode)
+		return 1
+	}
+	return 0
 }

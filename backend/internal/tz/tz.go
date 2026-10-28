@@ -56,6 +56,9 @@ func (d Date) Time() time.Time { return d.t }
 
 func (d Date) Before(o Date) bool { return d.t.Before(o.t) }
 
+// AddDays returns the date n days later (earlier if n is negative).
+func (d Date) AddDays(n int) Date { return Date{d.t.AddDate(0, 0, n)} }
+
 // DaysUntil returns the number of days from d to o (negative if o is earlier).
 func (d Date) DaysUntil(o Date) int { return int(o.t.Sub(d.t) / (24 * time.Hour)) }
 

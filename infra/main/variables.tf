@@ -1,0 +1,42 @@
+variable "region" {
+  description = "AWS region for every resource; the same region Bedrock is called in."
+  type        = string
+  default     = "ap-northeast-1"
+}
+
+variable "domain" {
+  description = "Public host name of the demo. Its A record is kept by hand at name.com."
+  type        = string
+  default     = "mogumogu.teiyou416.ninja"
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly cost (USD) above which AWS Budgets sends an email."
+  type        = number
+  default     = 50
+}
+
+variable "budget_email" {
+  description = "Address that receives the budget alerts. Set in terraform.tfvars, not committed."
+  type        = string
+  # Keeps the address out of plan output.
+  sensitive = true
+}
+
+variable "db_instance_class" {
+  description = "RDS instance size. db.t4g.micro: 2 vCPU (burstable), 1 GB memory."
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "instance_type" {
+  description = "EC2 size (arm64). t4g.micro: 2 vCPU (burstable), 1 GB memory; t4g.small doubles the memory."
+  type        = string
+  default     = "t4g.micro"
+}
+
+variable "bedrock_model_id" {
+  description = "The only Bedrock inference profile the instance may call; also passed to the AI service."
+  type        = string
+  default     = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+}

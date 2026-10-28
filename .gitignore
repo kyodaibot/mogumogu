@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Database backups (personal data and password hashes)
+backups/
+
 # Frontend
 node_modules/
 frontend/dist/
@@ -14,8 +17,18 @@ backend/bin/
 *.test
 *.out
 
-# Python (later phases)
+# Python
 .venv/
+__pycache__/
+.pytest_cache/
+
+# Terraform: provider cache, state (may hold resource details) and real
+# variable values. .terraform.lock.hcl and *.tfvars.example are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
 
 # OS
 .DS_Store
@@ -24,3 +37,5 @@ backend/bin/
 .claude/settings.local.json
 CLAUDE.local.md
 .mcp.json
+
+docs/diagram/
