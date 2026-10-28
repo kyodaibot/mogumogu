@@ -28,6 +28,7 @@ type Context struct {
 	TargetDate  string `json:"target_date"`
 	Now         string `json:"now"`
 	Timezone    string `json:"timezone"`
+	Locale      string `json:"locale"` // the reply's language: "ja" or "en"
 	Profile     any    `json:"profile"`
 	Events      any    `json:"events"`
 	EventsRange Range  `json:"events_range"`

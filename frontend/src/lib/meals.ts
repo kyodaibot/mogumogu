@@ -1,20 +1,32 @@
 import type { MealRecord, MealType } from '../api'
+import { t } from '../i18n'
 
-export const MEAL_TYPES: { value: MealType; label: string }[] = [
-  { value: 'breakfast', label: '早餐' },
-  { value: 'lunch', label: '午餐' },
-  { value: 'dinner', label: '晚餐' },
-  { value: 'snack', label: '加餐' },
-]
+// Labels are getters, so they follow the current language wherever they are
+// rendered.
+export const MEAL_TYPES: readonly { value: MealType; readonly label: string }[] = (
+  ['breakfast', 'lunch', 'dinner', 'snack'] as const
+).map((value) => ({
+  value,
+  get label() {
+    return t.value.meals[value]
+  },
+}))
 
-export const NUTRIENTS = [
-  { key: 'calories', label: '热量', unit: 'kcal' },
-  { key: 'protein_g', label: '蛋白质', unit: 'g' },
-  { key: 'fat_g', label: '脂质', unit: 'g' },
-  { key: 'carbs_g', label: '碳水', unit: 'g' },
-] as const satisfies readonly { key: keyof MealRecord; label: string; unit: string }[]
+export const NUTRIENTS = (
+  [
+    { key: 'calories', unit: 'kcal' },
+    { key: 'protein_g', unit: 'g' },
+    { key: 'fat_g', unit: 'g' },
+    { key: 'carbs_g', unit: 'g' },
+  ] as const satisfies readonly { key: keyof MealRecord; unit: string }[]
+).map((n) => ({
+  ...n,
+  get label() {
+    return t.value.nutrients[n.key]
+  },
+}))
 
-/** "450 kcal", or "未填写" for null. Never shows null as 0. */
+/** "450 kcal", or "Not entered" for null. Never shows null as 0. */
 export function formatNutrient(value: number | null, unit: string): string {
-  return value === null ? '未填写' : `${value} ${unit}`
+  return value === null ? t.value.nutrients.notEntered : `${value} ${unit}`
 }

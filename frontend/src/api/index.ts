@@ -120,6 +120,7 @@ export const api = {
   updateMeal: (id: number, m: MealRecordInput) => req<MealRecord>('PUT', `/api/meal-records/${id}`, m),
   deleteMeal: (id: number) => req<void>('DELETE', `/api/meal-records/${id}`),
 
-  sendAssistantMessage: (date: string, message: string) =>
-    req<AssistantReply>('POST', '/api/assistant/messages', { date, message }),
+  /** `locale` is the interface language; the reply is written in it. */
+  sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en') =>
+    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale }),
 }

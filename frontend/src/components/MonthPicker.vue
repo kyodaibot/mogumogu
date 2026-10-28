@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { t } from '../i18n'
+import { formatMonthShort, formatMonthTitle, formatYear } from '../lib/date'
 
 // The month title as a button that opens a year + 12-month panel, so any month
 // is two clicks away instead of one ‹ › press per month.
@@ -54,17 +56,17 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside))
       class="trigger"
       :aria-expanded="open"
       aria-haspopup="dialog"
-      aria-label="选择年份和月份"
+      :aria-label="t.monthPicker.label"
       @click="toggle"
     >
-      {{ year }}年{{ month }}月<span class="caret" aria-hidden="true">▾</span>
+      {{ formatMonthTitle(year, month) }}<span class="caret" aria-hidden="true">▾</span>
     </button>
 
-    <div v-if="open" class="panel" role="dialog" aria-label="选择年份和月份">
+    <div v-if="open" class="panel" role="dialog" :aria-label="t.monthPicker.label">
       <div class="year-row">
-        <button type="button" class="step" aria-label="上一年" @click="panelYear--">‹</button>
-        <span class="year" aria-live="polite">{{ panelYear }}年</span>
-        <button type="button" class="step" aria-label="下一年" @click="panelYear++">›</button>
+        <button type="button" class="step" :aria-label="t.monthPicker.prevYear" @click="panelYear--">‹</button>
+        <span class="year" aria-live="polite">{{ formatYear(panelYear) }}</span>
+        <button type="button" class="step" :aria-label="t.monthPicker.nextYear" @click="panelYear++">›</button>
       </div>
       <div class="months">
         <button
@@ -75,7 +77,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside))
           :aria-current="panelYear === year && m === month"
           @click="pick(m)"
         >
-          {{ m }}月
+          {{ formatMonthShort(m) }}
         </button>
       </div>
     </div>

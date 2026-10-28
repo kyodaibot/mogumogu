@@ -33,7 +33,7 @@ class Source:
         return [m for m in self.meals if start.isoformat() <= m["date"] <= end.isoformat()]
 
 
-def request(message: str, *, target="2026-10-27", allergens=None, meals=None, events=None) -> ReplyRequest:
+def request(message: str, *, locale="ja", target="2026-10-27", allergens=None, meals=None, events=None) -> ReplyRequest:
     return ReplyRequest.model_validate({
         "message": message,
         "token": "eval",
@@ -41,6 +41,7 @@ def request(message: str, *, target="2026-10-27", allergens=None, meals=None, ev
             "target_date": target,
             "now": "2026-10-27T11:30:00+09:00",
             "timezone": "Asia/Tokyo",
+            "locale": locale,
             "profile": {
                 "height_cm": 170, "weight_kg": 62, "age": 21, "has_exercise_habit": True,
                 "allergens": allergens, "goal": "build_muscle",
@@ -59,7 +60,7 @@ def meal(date: str, meal_type: str, content: str) -> dict:
 
 
 # Two months of dinners, fish every fifth day, for the long-range question.
-HISTORY = [meal(f"2026-{m:02d}-{d:02d}", "dinner", "烤鱼" if d % 5 == 0 else "鸡肉饭")
+HISTORY = [meal(f"2026-{m:02d}-{d:02d}", "dinner", "焼き魚" if d % 5 == 0 else "チキンライス")
            for m in (8, 9, 10) for d in range(1, 29)]
 
 
@@ -70,6 +71,18 @@ class Case:
     source: Source
     # Returns a problem description, or None when the case passes.
     check: Callable[[Outcome, Source], str | None]
+
+
+def _has_kana(text: str) -> bool:
+    return any("\u3040" <= c <= "\u30ff" for c in text)
+
+
+def in_language(o: Outcome, locale: str) -> str | None:
+    """Japanese text has kana; English text has none (food names aside, it is
+    checked on the reply and the recommendation reasons)."""
+    texts = [o.result.reply, *(r.reason for r in o.result.recommendations)]
+    wrong = [t for t in texts if _has_kana(t) != (locale == "ja")]
+    return f"回复语言不是 {locale}：{wrong[0][:40]}" if wrong else None
 
 
 def needs_three(o: Outcome, _: Source) -> str | None:
@@ -84,7 +97,7 @@ def no_allergens(o: Outcome, s: Source) -> str | None:
     if problem := needs_three(o, s):
         return problem
     shown = " ".join(f"{r.name} {r.description}" for r in o.result.recommendations)
-    hits = [a for a in ("虾", "花生", "shrimp", "peanut") if a in shown]
+    hits = [a for a in ("えび", "エビ", "海老", "shrimp", "prawn", "ピーナッツ", "落花生", "peanut") if a in shown.lower()]
     return f"推荐中出现过敏原 {hits}" if hits else None
 
 
@@ -107,11 +120,16 @@ def asks_meal(o: Outcome, s: Source) -> str | None:
 
 
 CASES = [
-    Case("有过敏原", request("今天午餐吃什么？", allergens=["虾", "花生"]), Source([]), no_allergens),
-    Case("没有任何记录", request("今天吃什么？"), Source([]), needs_three),
-    Case("超过 31 天的记录", request("我最近两个月吃了几次鱼？", meals=HISTORY[-7:]), Source(HISTORY), within_31_days),
-    Case("与饮食无关", request("帮我写一首关于秋天的诗"), Source([]), text_only),
-    Case("不是今天且没说餐次", request("那天吃什么好？", target="2026-10-29"), Source([]), asks_meal),
+    Case("有过敏原", request("今日の昼食は何を食べたらいい？", allergens=["えび", "ピーナッツ"]), Source([]), no_allergens),
+    Case("没有任何记录", request("今日は何を食べたらいい？"), Source([]), needs_three),
+    Case("超过 31 天的记录", request("最近2か月で魚を何回食べた？", meals=HISTORY[-7:]), Source(HISTORY), within_31_days),
+    Case("与饮食无关", request("秋についての詩を書いて"), Source([]), text_only),
+    Case("不是今天且没说餐次", request("その日は何を食べたらいい？", target="2026-10-29"), Source([]), asks_meal),
+    # English interface. The allergens were typed in Japanese, so only the
+    # prompt's rules keep shrimp and peanuts out (the code check cannot match).
+    Case("英语 + 日语写的过敏原", request("What should I eat for lunch today?", locale="en", allergens=["えび", "ピーナッツ"]),
+         Source([]), no_allergens),
+    Case("英语界面、日语提问", request("今日の夕食は何を食べたらいい？", locale="en"), Source([]), needs_three),
 ]
 
 
@@ -122,7 +140,7 @@ async def main() -> int:
         started = time.monotonic()
         outcome = await run_agent(model, case.source, case.req)
         ms = round((time.monotonic() - started) * 1000)
-        problem = outcome.error or case.check(outcome, case.source)
+        problem = outcome.error or case.check(outcome, case.source) or in_language(outcome, case.req.context.locale)
         failed += problem is not None
         print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.steps} 步, "
               f"输入 {outcome.input_tokens} / 输出 {outcome.output_tokens} token"

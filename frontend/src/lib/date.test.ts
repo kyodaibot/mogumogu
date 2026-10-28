@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { setLocale } from '../i18n'
 import {
   addDays,
   formatDayTitle,
+  formatMonthShort,
+  formatMonthTitle,
   formatTime,
   fromTokyoInput,
   monthGrid,
@@ -9,6 +12,7 @@ import {
   shiftMonth,
   toTokyoInput,
   todayTokyo,
+  weekdayHeaders,
   weekdayMon0,
 } from './date'
 
@@ -109,8 +113,20 @@ describe('formatting', () => {
     expect(formatTime('2026-10-23T23:00:00+09:00', '2026-10-23')).toBe('23:00')
     expect(formatTime('2026-10-24T01:00:00+09:00', '2026-10-23')).toBe('10/24 01:00')
   })
-  it('formats day titles with the weekday', () => {
-    expect(formatDayTitle('2026-10-23')).toBe('10月23日（周五）')
-    expect(formatDayTitle('2026-10-25')).toBe('10月25日（周日）')
+  it('formats day titles with the weekday, per language', () => {
+    setLocale('ja')
+    expect(formatDayTitle('2026-10-23')).toBe('10月23日(金)')
+    expect(formatDayTitle('2026-10-25')).toBe('10月25日(日)')
+    setLocale('en')
+    expect(formatDayTitle('2026-10-23')).toBe('Fri, Oct 23')
+  })
+  it('formats months and weekday headers, per language', () => {
+    setLocale('ja')
+    expect(formatMonthTitle(2026, 10)).toBe('2026年10月')
+    expect(weekdayHeaders()).toEqual(['月', '火', '水', '木', '金', '土', '日'])
+    setLocale('en')
+    expect(formatMonthTitle(2026, 10)).toBe('October 2026')
+    expect(formatMonthShort(1)).toBe('Jan')
+    expect(weekdayHeaders()[0]).toBe('Mon')
   })
 })

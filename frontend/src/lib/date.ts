@@ -3,6 +3,8 @@
 // Calendar dates are plain "YYYY-MM-DD" strings. Arithmetic on them uses UTC
 // so the result never depends on the browser's own time zone.
 
+import { locale, type Locale } from '../i18n'
+
 export const TOKYO = 'Asia/Tokyo'
 const TOKYO_OFFSET = '+09:00'
 const TOKYO_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -110,13 +112,45 @@ export function formatTime(instant: string, onDate: Ymd): string {
   return `${m}/${d} ${time}`
 }
 
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
-export const WEEKDAY_HEADERS = WEEKDAYS.map((w) => `周${w}`)
+// Display formats follow the interface language. Dates are formatted as UTC
+// midnight in a UTC formatter, so the browser's time zone never shifts them.
 
-/** "10月23日（周五）" */
-export function formatDayTitle(date: Ymd): string {
-  const [, m, d] = parts(date)
-  return `${m}月${d}日（周${WEEKDAYS[weekdayMon0(date)]}）`
+function displayFormat(options: Intl.DateTimeFormatOptions): (date: Ymd) => string {
+  const cache = new Map<Locale, Intl.DateTimeFormat>()
+  return (date) => {
+    let f = cache.get(locale.value)
+    if (!f) {
+      f = new Intl.DateTimeFormat(locale.value, { timeZone: 'UTC', ...options })
+      cache.set(locale.value, f)
+    }
+    return f.format(new Date(utcMidnight(date)))
+  }
+}
+
+/** "10月23日(金)" / "Fri, Oct 23" */
+export const formatDayTitle = displayFormat({ month: 'short', day: 'numeric', weekday: 'short' })
+
+/** "10月23日" / "Oct 23" */
+export const formatShortDate = displayFormat({ month: 'short', day: 'numeric' })
+
+const formatYearMonth = displayFormat({ year: 'numeric', month: 'long' })
+const formatMonth = displayFormat({ month: 'short' })
+const formatYearOnly = displayFormat({ year: 'numeric' })
+const formatWeekday = displayFormat({ weekday: 'short' })
+
+/** "2026年10月" / "October 2026" */
+export const formatMonthTitle = (year: number, month: number) => formatYearMonth(ymd(year, month, 1))
+
+/** "10月" / "Oct": a month button in the month picker. */
+export const formatMonthShort = (month: number) => formatMonth(ymd(2026, month, 1))
+
+/** "2026年" / "2026" */
+export const formatYear = (year: number) => formatYearOnly(ymd(year, 1, 1))
+
+/** Weekday column headers, Monday first: "月"… / "Mon"… */
+export function weekdayHeaders(): string[] {
+  // 2024-01-01 was a Monday.
+  return Array.from({ length: 7 }, (_, i) => formatWeekday(addDays('2024-01-01', i)))
 }
 
 export function dayOfMonth(date: Ymd): number {
