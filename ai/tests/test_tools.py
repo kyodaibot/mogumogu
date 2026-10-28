@@ -17,12 +17,12 @@ async def test_go_client_sends_token_and_range():
         seen["path"] = request.url.path
         seen["params"] = dict(request.url.params)
         seen["auth"] = request.headers["Authorization"]
-        return httpx.Response(200, json={"items": [{"id": 1, "title": "上课"}]})
+        return httpx.Response(200, json={"items": [{"id": 1, "title": "授業"}]})
 
     async with httpx.AsyncClient(base_url="http://go", transport=httpx.MockTransport(handler)) as http:
         items = await GoClient(http, "tok").fetch("events", date(2026, 10, 1), date(2026, 10, 31))
 
-    assert items == [{"id": 1, "title": "上课"}]
+    assert items == [{"id": 1, "title": "授業"}]
     assert seen == {
         "path": "/internal/agent/events",
         "params": {"from": "2026-10-01", "to": "2026-10-31"},
@@ -41,8 +41,8 @@ async def test_go_client_raises_when_go_rejects():
     ("args", "error"),
     [
         ({"from_date": "2026-10-01", "to_date": "2026-11-01"}, "31"),  # 32 days
-        ({"from_date": "2026-10-10", "to_date": "2026-10-01"}, "早于"),
-        ({"from_date": "10/01"}, "参数错误"),
+        ({"from_date": "2026-10-10", "to_date": "2026-10-01"}, "must not be before"),
+        ({"from_date": "10/01"}, "Invalid arguments"),
     ],
 )
 async def test_bad_arguments_are_not_sent_to_go(args, error):
@@ -61,11 +61,11 @@ async def test_31_days_is_allowed():
 
 
 async def test_long_results_are_truncated():
-    items = [{"id": i, "date": "2026-10-01", "meal_type": "lunch", "content": "很长的描述" * 10} for i in range(100)]
+    items = [{"id": i, "date": "2026-10-01", "meal_type": "lunch", "content": "とても長い説明" * 10} for i in range(100)]
     text = await run_query(FakeSource(items), "get_meals", {"from_date": "2026-10-01", "to_date": "2026-10-31"}, QueryBudget())
 
-    assert len(text) < MAX_RESULT_CHARS + 50
-    assert text.endswith("请缩小日期范围）")
+    assert len(text) < MAX_RESULT_CHARS + 60
+    assert text.endswith("narrow the date range)")
 
 
 async def test_one_message_reads_at_most_31_days_per_kind():
@@ -78,5 +78,5 @@ async def test_one_message_reads_at_most_31_days_per_kind():
     await run_query(source, "get_events", sep, budget)
     text = await run_query(source, "get_meals", {"from_date": "2026-10-02", "to_date": "2026-10-02"}, budget)
 
-    assert "累计最多查询 31 天" in text
+    assert "at most 31 days of records in total" in text
     assert [c[0] for c in source.calls] == ["meals", "meals", "events"]

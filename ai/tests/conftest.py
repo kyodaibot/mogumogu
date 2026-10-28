@@ -10,7 +10,9 @@ def anyio_backend():
     return "asyncio"
 
 
-def make_request(message: str = "今天午餐吃什么？", allergens: list[str] | None = None) -> ReplyRequest:
+def make_request(
+    message: str = "今日の昼食は何を食べたらいい？", allergens: list[str] | None = None, locale: str = "ja"
+) -> ReplyRequest:
     return ReplyRequest.model_validate({
         "message": message,
         "token": "test-token",
@@ -18,17 +20,18 @@ def make_request(message: str = "今天午餐吃什么？", allergens: list[str]
             "target_date": "2026-10-27",
             "now": "2026-10-27T11:30:00+09:00",
             "timezone": "Asia/Tokyo",
+            "locale": locale,
             "profile": {
                 "height_cm": 170, "weight_kg": 60, "age": 21, "has_exercise_habit": True,
                 "allergens": allergens, "goal": "build_muscle",
             },
             "events": [{
-                "title": "上课", "starts_at": "2026-10-27T13:00:00+09:00",
+                "title": "授業", "starts_at": "2026-10-27T13:00:00+09:00",
                 "ends_at": "2026-10-27T16:00:00+09:00", "notes": None,
             }],
             "events_range": {"from": "2026-10-26", "to": "2026-10-28"},
             "meals": [{
-                "date": "2026-10-26", "meal_type": "dinner", "content": "咖喱饭",
+                "date": "2026-10-26", "meal_type": "dinner", "content": "カレーライス",
                 "calories": None, "protein_g": None, "fat_g": None, "carbs_g": None,
             }],
             "meals_range": {"from": "2026-10-21", "to": "2026-10-27"},

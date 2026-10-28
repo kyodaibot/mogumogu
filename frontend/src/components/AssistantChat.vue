@@ -4,6 +4,7 @@ import { ApiError, api, type AssistantReply } from '../api'
 import { mealQuestions, presetQuestions } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
+import { locale, t } from '../i18n'
 import MealTray from './MealTray.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
@@ -73,7 +74,7 @@ async function ask(turn: Turn) {
   turn.error = undefined
   await scrollToEnd()
   try {
-    turn.reply = await api.sendAssistantMessage(turn.date, turn.text)
+    turn.reply = await api.sendAssistantMessage(turn.date, turn.text, locale.value)
     turn.status = 'done'
   } catch (err) {
     turn.status = 'failed'
@@ -86,16 +87,17 @@ async function ask(turn: Turn) {
 
 function failureText(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'rate_limited') return '今天的提问次数已经用完了，明天再来吧。'
-    if (err.code === 'ai_unavailable') return '饮食助手这次没能回答，请重试。'
-    if (err.code === 'validation_failed') return `消息最多 ${MAX_LENGTH} 个字。`
+    const a = t.value.assistant
+    if (err.code === 'rate_limited') return a.limitReached
+    if (err.code === 'ai_unavailable') return a.unavailable
+    if (err.code === 'validation_failed') return a.tooLong(MAX_LENGTH)
   }
   return errorMessage(err)
 }
 
 function onKeydown(e: KeyboardEvent) {
   // Enter sends, Shift+Enter starts a new line; Enter that confirms an IME
-  // candidate (Chinese or Japanese input) must not send.
+  // candidate (Japanese input) must not send.
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault()
     sendDraft()
@@ -127,7 +129,7 @@ watch(
     @click="openPanel"
   >
     <MealTray :filled="['breakfast', 'lunch', 'dinner', 'snack']" size="md" />
-    饮食助手
+    {{ t.assistant.name }}
   </button>
 
   <section
@@ -139,50 +141,51 @@ watch(
   >
     <header class="panel-header">
       <div>
-        <h2 id="assistant-title">饮食助手</h2>
+        <h2 id="assistant-title">{{ t.assistant.name }}</h2>
         <p class="target">
-          关于 <strong>{{ formatDayTitle(date) }}</strong><span v-if="date === today" class="today-mark">今天</span>
+          {{ t.assistant.aboutBefore }}<strong>{{ formatDayTitle(date) }}</strong>{{ t.assistant.aboutAfter
+          }}<span v-if="date === today" class="today-mark">{{ t.common.today }}</span>
         </p>
       </div>
-      <button type="button" class="close" aria-label="关闭饮食助手" @click="closePanel">×</button>
+      <button type="button" class="close" :aria-label="t.assistant.close" @click="closePanel">×</button>
     </header>
 
     <div ref="scroller" class="messages" aria-live="polite">
       <div v-if="turns.length === 0" class="intro">
-        <p>可以问我某一餐吃什么，或者让我回顾你的饮食记录。我会参考你的 Profile、行程和最近吃过的东西。</p>
-        <ul class="presets" aria-label="预设问题">
+        <p>{{ t.assistant.intro }}</p>
+        <ul class="presets" :aria-label="t.assistant.presets">
           <li v-for="p in presets" :key="p">
             <button type="button" class="chip" @click="send(p)">{{ p }}</button>
           </li>
         </ul>
       </div>
 
-      <template v-for="(t, i) in turns" :key="t.id">
-        <p v-if="startsNewDate(i)" class="divider"><span>以下关于 {{ formatDayTitle(t.date) }}</span></p>
+      <template v-for="(turn, i) in turns" :key="turn.id">
+        <p v-if="startsNewDate(i)" class="divider"><span>{{ t.assistant.dateDivider(formatDayTitle(turn.date)) }}</span></p>
 
-        <p class="bubble user">{{ t.text }}</p>
+        <p class="bubble user">{{ turn.text }}</p>
 
-        <div v-if="t.status === 'pending'" class="bubble assistant thinking" role="status">
-          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>正在思考…
+        <div v-if="turn.status === 'pending'" class="bubble assistant thinking" role="status">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>{{ t.assistant.thinking }}
         </div>
 
-        <div v-else-if="t.status === 'failed'" class="failure" role="alert">
-          <span>{{ t.error }}</span>
-          <button v-if="t.retryable" type="button" :disabled="busy" @click="ask(t)">重试</button>
+        <div v-else-if="turn.status === 'failed'" class="failure" role="alert">
+          <span>{{ turn.error }}</span>
+          <button v-if="turn.retryable" type="button" :disabled="busy" @click="ask(turn)">{{ t.common.retry }}</button>
         </div>
 
-        <template v-else-if="t.reply">
-          <p class="bubble assistant">{{ t.reply.reply }}</p>
-          <ul v-if="t.reply.recommendations.length" class="recs">
-            <li v-for="r in t.reply.recommendations" :key="r.name" class="rec">
+        <template v-else-if="turn.reply">
+          <p class="bubble assistant">{{ turn.reply.reply }}</p>
+          <ul v-if="turn.reply.recommendations.length" class="recs">
+            <li v-for="r in turn.reply.recommendations" :key="r.name" class="rec">
               <h3>{{ r.name }}</h3>
               <p class="desc">{{ r.description }}</p>
               <p class="reason">{{ r.reason }}</p>
             </li>
           </ul>
-          <ul v-if="t.reply.ask_meal_type" class="presets follow-up" aria-label="选择餐次">
-            <li v-for="q in mealQuestions(t.date, today)" :key="q">
-              <button type="button" class="chip" :disabled="busy" @click="send(q, t.date)">{{ q }}</button>
+          <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
+            <li v-for="q in mealQuestions(turn.date, today)" :key="q">
+              <button type="button" class="chip" :disabled="busy" @click="send(q, turn.date)">{{ q }}</button>
             </li>
           </ul>
         </template>
@@ -190,17 +193,17 @@ watch(
     </div>
 
     <form class="composer" @submit.prevent="sendDraft">
-      <label class="sr-only" for="assistant-input">给饮食助手的消息</label>
+      <label class="sr-only" for="assistant-input">{{ t.assistant.inputLabel }}</label>
       <textarea
         id="assistant-input"
         ref="input"
         v-model="draft"
         rows="2"
         :maxlength="MAX_LENGTH"
-        placeholder="例如：不想吃辣，只有 15 分钟"
+        :placeholder="t.assistant.inputPlaceholder"
         @keydown="onKeydown"
       ></textarea>
-      <button type="submit" class="primary" :disabled="busy || !draft.trim()">发送</button>
+      <button type="submit" class="primary" :disabled="busy || !draft.trim()">{{ t.assistant.send }}</button>
       <small v-if="draft.length > MAX_LENGTH - 50" class="count">{{ draft.length }} / {{ MAX_LENGTH }}</small>
     </form>
   </section>

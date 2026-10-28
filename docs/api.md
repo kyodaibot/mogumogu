@@ -427,14 +427,15 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 |---|---|---|
 | `date` | 日期 | 必填；目标日期，即日历上选中的日期 |
 | `message` | string | 必填；去空白后 1–500 个字符 |
+| `locale` | string | 可选；`ja` 或 `en`，即当前界面语言，回复用这种语言。省略时为 `en`，其他值返回 `422 invalid_value` |
 
 成功 `200`：
 
 ```json
 {
-  "reply": "今天下午有课，推荐三个耐饿的方案：",
+  "reply": "午後に授業があるので、腹持ちのよい案を3つ挙げます：",
   "recommendations": [
-    { "name": "鸡胸肉便当", "description": "鸡胸肉配糙米", "reason": "下午有 3 小时的课" }
+    { "name": "鶏むね肉弁当", "description": "鶏むね肉と玄米", "reason": "午後に3時間の授業がある" }
   ],
   "ask_meal_type": false
 }
@@ -444,7 +445,7 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 - `recommendations`：空数组，或正好 3 个（示例为了简短只写了 1 个）。
 - `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
 
-错误：`401`、`403`、`422`（`date` 或 `message` 不合规则）、`429 rate_limited`（调用额度用完）、`503 ai_unavailable`。
+错误：`401`、`403`、`422`（`date`、`message` 或 `locale` 不合规则）、`429 rate_limited`（调用额度用完）、`503 ai_unavailable`。
 
 ### 9.2 调用额度
 

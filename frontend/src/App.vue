@@ -3,7 +3,9 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { session } from './session'
 import { errorMessage } from './lib/messages'
+import LocaleSwitch from './components/LocaleSwitch.vue'
 import MealTray from './components/MealTray.vue'
+import { t } from './i18n'
 
 const router = useRouter()
 const loggingOut = ref(false)
@@ -30,29 +32,33 @@ async function logout() {
       <span class="wordmark">mogumogu</span>
     </RouterLink>
     <nav v-if="session.state.user">
-      <RouterLink v-if="session.state.hasProfile" to="/">日历</RouterLink>
-      <RouterLink to="/profile">Profile</RouterLink>
-      <span class="account">
+      <RouterLink v-if="session.state.hasProfile" to="/">{{ t.nav.calendar }}</RouterLink>
+      <RouterLink to="/profile">{{ t.nav.profile }}</RouterLink>
+    </nav>
+    <div class="tools">
+      <span v-if="session.state.user" class="account">
         <span class="username" :title="session.state.user.username">{{ session.state.user.username }}</span>
         <button type="button" class="link" :disabled="loggingOut" @click="logout">
-          {{ loggingOut ? '退出中…' : '退出' }}
+          {{ loggingOut ? t.nav.loggingOut : t.nav.logout }}
         </button>
       </span>
-    </nav>
+      <LocaleSwitch />
+    </div>
   </header>
   <p v-if="logoutError" class="banner error logout-error" role="alert">{{ logoutError }}</p>
   <RouterView />
 </template>
 
 <style scoped>
+/* One row on wide screens: brand, then nav and tools on the right. On phones
+   the nav links move to a second row, so Japanese and English labels fit. */
 .app-header {
   position: sticky;
   top: 0;
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   padding: 0.625rem 1.25rem;
   background: color-mix(in srgb, var(--paper) 92%, transparent);
   backdrop-filter: blur(8px);
@@ -63,6 +69,7 @@ async function logout() {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  margin-right: auto;
   color: inherit;
   text-decoration: none;
   border-radius: 8px;
@@ -101,12 +108,18 @@ nav a.router-link-exact-active {
   background: var(--surface);
 }
 
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
 .account {
   display: flex;
   align-items: center;
   gap: 0.25rem;
   min-width: 0;
-  margin-left: 0.75rem;
   padding-left: 0.75rem;
   border-left: 1px solid var(--line);
 }
@@ -130,25 +143,38 @@ nav a.router-link-exact-active {
 
 @media (max-width: 560px) {
   .app-header {
-    padding: 0.5rem 1rem;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 1rem 0.375rem;
+    row-gap: 0.25rem;
+    column-gap: 0.5rem;
   }
 
   .wordmark {
     font-size: 1.0625rem;
   }
 
+  nav {
+    order: 1;
+    width: 100%;
+    margin-left: -0.5rem;
+  }
+
   nav a {
-    padding: 0.375rem 0.5rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  .tools {
+    gap: 0.5rem;
   }
 
   .account {
-    margin-left: 0.25rem;
-    padding-left: 0.375rem;
+    padding-left: 0;
+    border-left: none;
   }
 
+  /* No room beside the brand; the account is still one tap away (logout). */
   .username {
-    max-width: 4.5rem;
+    display: none;
   }
 }
 </style>

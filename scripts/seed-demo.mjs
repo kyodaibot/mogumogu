@@ -71,29 +71,29 @@ const profile = {
   weight_kg: 62,
   age: 21,
   has_exercise_habit: true,
-  allergens: ['虾'],
+  allergens: ['えび'],
   goal: 'build_muscle',
 }
 
 const breakfasts = [
-  ['燕麦牛奶配香蕉', 420, 15, 9, 70],
-  ['全麦吐司和两个煮鸡蛋', 380, 20, 14, 40],
-  ['饭团和味噌汤', 350, 9, 4, 68],
-  ['希腊酸奶配格兰诺拉', 400, 22, 10, 52],
+  ['オートミールと牛乳、バナナ', 420, 15, 9, 70],
+  ['全粒粉トーストとゆで卵2個', 380, 20, 14, 40],
+  ['おにぎりと味噌汁', 350, 9, 4, 68],
+  ['ギリシャヨーグルトとグラノーラ', 400, 22, 10, 52],
 ]
 const lunches = [
-  ['学校食堂的鸡肉盖饭', 750, 32, 20, 105],
-  ['便利店沙拉鸡胸和饭团', 520, 34, 9, 72],
-  ['豚骨拉面', 820, 25, 32, 100],
-  ['烤鲑鱼定食', 680, 35, 18, 85],
-  ['咖喱饭', 780, 18, 24, 120],
+  ['学食の親子丼', 750, 32, 20, 105],
+  ['コンビニのサラダチキンとおにぎり', 520, 34, 9, 72],
+  ['豚骨ラーメン', 820, 25, 32, 100],
+  ['焼き鮭定食', 680, 35, 18, 85],
+  ['カレーライス', 780, 18, 24, 120],
 ]
 const dinners = [
-  ['自己做的番茄炒蛋和米饭', 650, 22, 20, 90],
-  ['牛肉乌冬面', 600, 26, 14, 88],
-  ['烤鱼和蔬菜', 550, 38, 18, 40],
-  ['麻婆豆腐盖饭', 720, 28, 26, 92],
-  ['居酒屋聚餐', null, null, null, null],
+  ['自炊のトマトと卵の炒め物、ご飯', 650, 22, 20, 90],
+  ['肉うどん', 600, 26, 14, 88],
+  ['焼き魚と野菜', 550, 38, 18, 40],
+  ['麻婆豆腐丼', 720, 28, 26, 92],
+  ['居酒屋で飲み会', null, null, null, null],
 ]
 
 function meal(date, type, [content, calories, protein, fat, carbs], withNutrition) {
@@ -111,7 +111,7 @@ function mealsFor(date, i, isToday) {
   out.push(meal(date, 'lunch', lunches[i % lunches.length], i % 4 !== 3))
   // Today's dinner has not happened yet.
   if (!isToday) out.push(meal(date, 'dinner', dinners[i % dinners.length], i % 5 !== 4))
-  if (i % 4 === 2) out.push(meal(date, 'snack', ['蛋白棒', 200, 20, 7, 18], true))
+  if (i % 4 === 2) out.push(meal(date, 'snack', ['プロテインバー', 200, 20, 7, 18], true))
   return out
 }
 
@@ -122,11 +122,11 @@ function event(date, title, start, end, notes) {
 function eventsFor(date) {
   const wd = weekday(date)
   const out = []
-  if (wd >= 1 && wd <= 5) out.push(event(date, '专业课', '09:00', '12:10'))
-  if (wd === 2 || wd === 4) out.push(event(date, '实验课', '13:00', '16:10', '实验室不能带食物'))
-  if (wd === 1 || wd === 3 || wd === 5) out.push(event(date, '健身房：力量训练', '18:00', '19:30'))
-  if (wd === 6) out.push(event(date, '便利店打工', '10:00', '16:00'))
-  if (wd === 0) out.push(event(date, '和朋友去超市采购', '15:00', '16:30'))
+  if (wd >= 1 && wd <= 5) out.push(event(date, '専門科目の授業', '09:00', '12:10'))
+  if (wd === 2 || wd === 4) out.push(event(date, '実験', '13:00', '16:10', '実験室は飲食禁止'))
+  if (wd === 1 || wd === 3 || wd === 5) out.push(event(date, 'ジム：筋トレ', '18:00', '19:30'))
+  if (wd === 6) out.push(event(date, 'コンビニのアルバイト', '10:00', '16:00'))
+  if (wd === 0) out.push(event(date, '友達とスーパーで買い出し', '15:00', '16:30'))
   return out
 }
 

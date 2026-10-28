@@ -139,7 +139,8 @@ func TestIntegrationAssistantContext(t *testing.T) {
 
 	req := env.ai.last()
 	ctx := req.Context
-	if req.Message != "午餐吃什么" || ctx.TargetDate != day(0) || ctx.Timezone != "Asia/Tokyo" || !strings.HasSuffix(ctx.Now, "+09:00") {
+	if req.Message != "午餐吃什么" || ctx.TargetDate != day(0) || ctx.Timezone != "Asia/Tokyo" || !strings.HasSuffix(ctx.Now, "+09:00") ||
+		ctx.Locale != "en" {
 		t.Fatalf("request: %q %+v", req.Message, ctx)
 	}
 	if !strings.Contains(fmtJSON(t, ctx.Profile), `"allergens":["虾"]`) {
@@ -167,6 +168,12 @@ func TestIntegrationAssistantContext(t *testing.T) {
 		t.Fatalf("future target: meals %+v events %+v", ctx.MealsRange, ctx.EventsRange)
 	}
 
+	// The interface language is passed on for the reply.
+	b.expect(200, "POST", "/api/assistant/messages", map[string]string{"date": day(0), "message": "昼食は？", "locale": "ja"})
+	if l := env.ai.last().Context.Locale; l != "ja" {
+		t.Fatalf("locale: %q", l)
+	}
+
 	// The token Go hands over belongs to this user.
 	if _, err := env.tokens.Verify(env.ai.last().Token); err != nil {
 		t.Fatalf("token: %v", err)
@@ -189,6 +196,7 @@ func TestIntegrationAssistantValidation(t *testing.T) {
 		"blank":      message("2026-10-27", "   "),
 		"501 chars":  message("2026-10-27", strings.Repeat("长", 501)),
 		"no message": map[string]string{"date": "2026-10-27"},
+		"bad locale": map[string]string{"date": "2026-10-27", "message": "hi", "locale": "zh"},
 	} {
 		if r := b.do("POST", "/api/assistant/messages", body); r.status != 422 {
 			t.Errorf("%s: %d %s", name, r.status, r.body)

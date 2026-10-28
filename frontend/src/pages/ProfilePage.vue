@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api, ApiError, type Goal, type Profile } from '../api'
 import { session } from '../session'
 import { errorMessage, fieldMessages } from '../lib/messages'
+import { t } from '../i18n'
 
 const router = useRouter()
 
@@ -41,7 +42,7 @@ function fill(p: Profile) {
     form.allergenMode = 'none'
   } else {
     form.allergenMode = 'list'
-    form.allergenText = p.allergens.join('、')
+    form.allergenText = p.allergens.join(t.value.profile.allergenJoiner)
   }
 }
 
@@ -61,7 +62,7 @@ async function load() {
   }
 }
 
-/** Splits on Chinese or ASCII commas / enumeration marks and newlines. */
+/** Splits on ASCII or full-width commas, the Japanese 、 and newlines. */
 function parseAllergens(text: string): string[] {
   return text.split(/[,，、\n]/).map((s) => s.trim()).filter((s) => s !== '')
 }
@@ -86,7 +87,7 @@ async function save() {
   fields.value = {}
 
   if (form.allergenMode === 'list' && parseAllergens(form.allergenText).length === 0) {
-    fields.value = { allergens: '请填写至少一项，或选择「没有已知过敏原」' }
+    fields.value = { allergens: t.value.profile.allergensEmpty }
     saving.value = false
     return
   }
@@ -120,32 +121,32 @@ onMounted(load)
 
 <template>
   <main class="page narrow profile">
-    <h1>Profile</h1>
-    <p class="lead">身体数据、目标和过敏原会用来给你推荐下一餐，随时可以修改。</p>
-    <p v-if="isNew" class="banner info">欢迎！请先填写基本资料，之后就可以使用日历了。</p>
+    <h1>{{ t.nav.profile }}</h1>
+    <p class="lead">{{ t.profile.lead }}</p>
+    <p v-if="isNew" class="banner info">{{ t.profile.welcome }}</p>
 
-    <p v-if="loading" class="muted">加载中…</p>
+    <p v-if="loading" class="muted">{{ t.common.loading }}</p>
     <div v-else-if="loadError" class="banner error" role="alert">
       {{ loadError }}
-      <button type="button" @click="load">重试</button>
+      <button type="button" @click="load">{{ t.common.retry }}</button>
     </div>
 
     <form v-else class="card form" novalidate @submit.prevent="save">
       <section class="group">
-        <h2>身体数据</h2>
+        <h2>{{ t.profile.body }}</h2>
         <div class="row body-row">
           <label>
-            身高（cm）
+            {{ t.profile.height }}
             <input v-model.number="form.height_cm" type="number" inputmode="decimal" step="0.1" min="50" max="300" />
             <small v-if="fields.height_cm" class="field-error">{{ fields.height_cm }}</small>
           </label>
           <label>
-            体重（kg）
+            {{ t.profile.weight }}
             <input v-model.number="form.weight_kg" type="number" inputmode="decimal" step="0.1" min="10" max="500" />
             <small v-if="fields.weight_kg" class="field-error">{{ fields.weight_kg }}</small>
           </label>
           <label>
-            年龄
+            {{ t.profile.age }}
             <input v-model.number="form.age" type="number" inputmode="numeric" step="1" min="10" max="120" />
             <small v-if="fields.age" class="field-error">{{ fields.age }}</small>
           </label>
@@ -153,42 +154,42 @@ onMounted(load)
       </section>
 
       <section class="group">
-        <h2>习惯和目标</h2>
+        <h2>{{ t.profile.habitsAndGoal }}</h2>
         <fieldset>
-          <legend>是否有健身习惯</legend>
-          <label class="inline"><input v-model="form.has_exercise_habit" type="radio" :value="true" /> 有</label>
-          <label class="inline"><input v-model="form.has_exercise_habit" type="radio" :value="false" /> 没有</label>
+          <legend>{{ t.profile.exerciseHabit }}</legend>
+          <label class="inline"><input v-model="form.has_exercise_habit" type="radio" :value="true" /> {{ t.profile.yes }}</label>
+          <label class="inline"><input v-model="form.has_exercise_habit" type="radio" :value="false" /> {{ t.profile.no }}</label>
           <small v-if="fields.has_exercise_habit" class="field-error">{{ fields.has_exercise_habit }}</small>
         </fieldset>
 
         <fieldset>
-          <legend>目标</legend>
-          <label class="inline"><input v-model="form.goal" type="radio" value="build_muscle" /> 增肌</label>
-          <label class="inline"><input v-model="form.goal" type="radio" value="lose_fat" /> 减脂</label>
+          <legend>{{ t.profile.goal }}</legend>
+          <label class="inline"><input v-model="form.goal" type="radio" value="build_muscle" /> {{ t.profile.buildMuscle }}</label>
+          <label class="inline"><input v-model="form.goal" type="radio" value="lose_fat" /> {{ t.profile.loseFat }}</label>
           <small v-if="fields.goal" class="field-error">{{ fields.goal }}</small>
         </fieldset>
       </section>
 
       <section class="group">
-        <h2>过敏原</h2>
+        <h2>{{ t.profile.allergens }}</h2>
         <fieldset>
-          <legend class="visually-hidden">过敏原</legend>
-          <label class="inline"><input v-model="form.allergenMode" type="radio" value="unset" /> 暂不填写</label>
-          <label class="inline"><input v-model="form.allergenMode" type="radio" value="none" /> 没有已知过敏原</label>
-          <label class="inline"><input v-model="form.allergenMode" type="radio" value="list" /> 有过敏原</label>
+          <legend class="visually-hidden">{{ t.profile.allergens }}</legend>
+          <label class="inline"><input v-model="form.allergenMode" type="radio" value="unset" /> {{ t.profile.allergensUnset }}</label>
+          <label class="inline"><input v-model="form.allergenMode" type="radio" value="none" /> {{ t.profile.allergensNone }}</label>
+          <label class="inline"><input v-model="form.allergenMode" type="radio" value="list" /> {{ t.profile.allergensList }}</label>
           <label v-if="form.allergenMode === 'list'" class="allergen-input">
-            <input v-model="form.allergenText" placeholder="例如：花生、虾、鸡蛋" aria-label="过敏原列表" />
-            <small class="hint">用顿号或逗号分隔，最多 20 项</small>
+            <input v-model="form.allergenText" :placeholder="t.profile.allergensPlaceholder" :aria-label="t.profile.allergensListLabel" />
+            <small class="hint">{{ t.profile.allergensHint }}</small>
           </label>
           <small v-if="fields.allergens" class="field-error">{{ fields.allergens }}</small>
         </fieldset>
       </section>
 
       <p v-if="saveError" class="banner error" role="alert">{{ saveError }}</p>
-      <p v-if="saved" class="banner success" role="status">已保存。</p>
+      <p v-if="saved" class="banner success" role="status">{{ t.profile.saved }}</p>
 
       <button type="submit" class="primary submit" :disabled="saving">
-        {{ saving ? '保存中…' : isNew ? '保存并开始使用' : '保存' }}
+        {{ saving ? t.common.saving : isNew ? t.profile.saveAndStart : t.common.save }}
       </button>
     </form>
   </main>

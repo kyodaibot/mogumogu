@@ -7,7 +7,6 @@ import MealForm from '../components/MealForm.vue'
 import MealTray from '../components/MealTray.vue'
 import MonthPicker from '../components/MonthPicker.vue'
 import {
-  WEEKDAY_HEADERS,
   dayOfMonth,
   formatDayTitle,
   formatTime,
@@ -15,11 +14,13 @@ import {
   overlapsDay,
   shiftMonth,
   todayTokyo,
+  weekdayHeaders,
   yearMonthOf,
   type Ymd,
 } from '../lib/date'
 import { MEAL_TYPES, NUTRIENTS, formatNutrient } from '../lib/meals'
 import { errorMessage } from '../lib/messages'
+import { t } from '../i18n'
 
 const today = todayTokyo()
 const view = ref(yearMonthOf(today))
@@ -80,11 +81,12 @@ const summaries = computed(() => {
 })
 
 function dayLabel(day: Ymd): string {
+  const c = t.value.calendar
   const s = summaries.value.get(day)!
   const parts = [formatDayTitle(day)]
-  if (s.events) parts.push(`行程 ${s.events} 项`)
-  parts.push(s.meals.length ? `已记录${s.meals.map((t) => MEAL_TYPES.find((x) => x.value === t)!.label).join('、')}` : '没有饮食记录')
-  return parts.join('，')
+  if (s.events) parts.push(c.dayEvents(s.events))
+  parts.push(s.meals.length ? c.dayLogged(s.meals.map((m) => t.value.meals[m])) : c.dayNoMeals)
+  return parts.join(c.dayPartJoiner)
 }
 
 const dayEvents = computed(() => eventsOn(selected.value))
@@ -123,7 +125,7 @@ async function afterSave() {
 }
 
 async function remove(kind: 'event' | 'meal', id: number, label: string) {
-  if (!window.confirm(`确定删除「${label}」吗？`)) return
+  if (!window.confirm(t.value.common.confirmDelete(label))) return
   actionError.value = ''
   try {
     if (kind === 'event') await api.deleteEvent(id)
@@ -142,21 +144,21 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
         <h1>
           <MonthPicker :year="view.year" :month="view.month" :current="yearMonthOf(today)" @pick="jumpTo" />
         </h1>
-        <span v-if="loading" class="muted loading">加载中…</span>
+        <span v-if="loading" class="muted loading">{{ t.common.loading }}</span>
         <div class="month-buttons">
-          <button type="button" class="icon" aria-label="上个月" @click="goMonth(-1)">‹</button>
-          <button type="button" @click="goToday">今天</button>
-          <button type="button" class="icon" aria-label="下个月" @click="goMonth(1)">›</button>
+          <button type="button" class="icon" :aria-label="t.calendar.prevMonth" @click="goMonth(-1)">‹</button>
+          <button type="button" @click="goToday">{{ t.common.today }}</button>
+          <button type="button" class="icon" :aria-label="t.calendar.nextMonth" @click="goMonth(1)">›</button>
         </div>
       </header>
 
       <div v-if="loadError" class="banner error" role="alert">
         {{ loadError }}
-        <button type="button" @click="load">重试</button>
+        <button type="button" @click="load">{{ t.common.retry }}</button>
       </div>
 
       <div class="grid" role="grid">
-        <div v-for="w in WEEKDAY_HEADERS" :key="w" class="weekday" role="columnheader">{{ w }}</div>
+        <div v-for="w in weekdayHeaders()" :key="w" class="weekday" role="columnheader">{{ w }}</div>
         <template v-for="week in grid.weeks" :key="week[0]">
           <button
             v-for="day in week"
@@ -180,28 +182,28 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
                 v-if="(day <= today && day.startsWith(monthPrefix)) || summaries.get(day)!.meals.length"
                 :filled="summaries.get(day)!.meals"
               />
-              <span v-if="summaries.get(day)!.events" class="badge event">行程 {{ summaries.get(day)!.events }}</span>
+              <span v-if="summaries.get(day)!.events" class="badge event">{{ t.calendar.eventBadge(summaries.get(day)!.events) }}</span>
             </span>
           </button>
         </template>
       </div>
 
-      <ul class="legend" aria-label="餐盘图例">
-        <li v-for="t in MEAL_TYPES" :key="t.value"><span class="swatch" :class="t.value"></span>{{ t.label }}</li>
+      <ul class="legend" :aria-label="t.calendar.legend">
+        <li v-for="m in MEAL_TYPES" :key="m.value"><span class="swatch" :class="m.value"></span>{{ m.label }}</li>
       </ul>
     </section>
 
     <section class="day-panel">
       <header class="day-header">
         <h2>{{ formatDayTitle(selected) }}</h2>
-        <span v-if="selected === today" class="today-chip">今天</span>
+        <span v-if="selected === today" class="today-chip">{{ t.common.today }}</span>
       </header>
 
       <p v-if="actionError" class="banner error" role="alert">{{ actionError }}</p>
 
       <div class="section-title">
-        <h3>行程</h3>
-        <button v-if="!editing" type="button" @click="editing = { kind: 'event', item: null }">+ 新增行程</button>
+        <h3>{{ t.calendar.events }}</h3>
+        <button v-if="!editing" type="button" @click="editing = { kind: 'event', item: null }">{{ t.calendar.addEvent }}</button>
       </div>
       <EventForm
         v-if="editing?.kind === 'event'"
@@ -211,7 +213,7 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
         @saved="afterSave"
         @cancel="editing = null"
       />
-      <p v-if="!loading && dayEvents.length === 0" class="muted empty">这一天还没有行程。</p>
+      <p v-if="!loading && dayEvents.length === 0" class="muted empty">{{ t.calendar.noEvents }}</p>
       <ul class="items">
         <li v-for="e in dayEvents" :key="e.id" class="item event">
           <div class="body">
@@ -220,15 +222,15 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
             <div v-if="e.notes" class="notes">{{ e.notes }}</div>
           </div>
           <div class="item-actions">
-            <button type="button" class="link" @click="editing = { kind: 'event', item: e }">编辑</button>
-            <button type="button" class="link danger" @click="remove('event', e.id, e.title)">删除</button>
+            <button type="button" class="link" @click="editing = { kind: 'event', item: e }">{{ t.common.edit }}</button>
+            <button type="button" class="link danger" @click="remove('event', e.id, e.title)">{{ t.common.delete }}</button>
           </div>
         </li>
       </ul>
 
       <div class="section-title">
-        <h3>饮食记录</h3>
-        <button v-if="!editing" type="button" @click="editing = { kind: 'meal', item: null }">+ 新增记录</button>
+        <h3>{{ t.calendar.meals }}</h3>
+        <button v-if="!editing" type="button" @click="editing = { kind: 'meal', item: null }">{{ t.calendar.addMeal }}</button>
       </div>
       <MealForm
         v-if="editing?.kind === 'meal'"
@@ -238,7 +240,7 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
         @saved="afterSave"
         @cancel="editing = null"
       />
-      <p v-if="!loading && dayMealGroups.length === 0" class="muted empty">这一天还没有饮食记录。</p>
+      <p v-if="!loading && dayMealGroups.length === 0" class="muted empty">{{ t.calendar.noMeals }}</p>
       <div v-for="g in dayMealGroups" :key="g.value" class="meal-group" :class="g.value">
         <h4><span class="swatch" :class="g.value"></span>{{ g.label }}</h4>
         <ul class="items">
@@ -252,8 +254,8 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
               </div>
             </div>
             <div class="item-actions">
-              <button type="button" class="link" @click="editing = { kind: 'meal', item: m }">编辑</button>
-              <button type="button" class="link danger" @click="remove('meal', m.id, m.content)">删除</button>
+              <button type="button" class="link" @click="editing = { kind: 'meal', item: m }">{{ t.common.edit }}</button>
+              <button type="button" class="link danger" @click="remove('meal', m.id, m.content)">{{ t.common.delete }}</button>
             </div>
           </li>
         </ul>

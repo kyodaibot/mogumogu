@@ -49,6 +49,8 @@ class Context(BaseModel):
     target_date: date
     now: datetime
     timezone: str
+    # The interface language, which the reply is written in.
+    locale: Literal["ja", "en"] = "en"
     profile: Profile | None
     events: list[Event]
     events_range: DateRange
@@ -66,36 +68,37 @@ class ReplyRequest(BaseModel):
 
 
 class Recommendation(BaseModel):
-    name: str = Field(min_length=1, max_length=40, description="菜名或食物组合")
-    description: str = Field(min_length=1, max_length=120, description="简短说明")
+    # Limits leave room for English, which is longer than Japanese.
+    name: str = Field(min_length=1, max_length=80, description="Dish or combination of foods")
+    description: str = Field(min_length=1, max_length=200, description="Short description")
     reason: str = Field(
         min_length=1,
-        max_length=120,
-        description="与用户的 Profile、行程或饮食记录相关的推荐理由",
+        max_length=200,
+        description="Why it suits the user, based on their profile, schedule or meal records",
     )
 
 
 class SubmitReply(BaseModel):
     """Arguments of the submit_reply tool, which is also the API response."""
 
-    reply: str = Field(min_length=1, max_length=600, description="给用户的回复文字")
+    reply: str = Field(min_length=1, max_length=1000, description="Reply text for the user")
     recommendations: list[Recommendation] = Field(
-        default_factory=list, description="没有推荐时为空，有推荐时正好 3 个"
+        default_factory=list, description="Empty without recommendations, otherwise exactly 3"
     )
     ask_meal_type: bool = Field(
         default=False,
-        description="目标日期不是今天且用户没说餐次时为 true，此时不给推荐",
+        description="True when the target date is not today and the user did not say which meal; then no recommendations",
     )
 
     @field_validator("recommendations")
     @classmethod
     def zero_or_three(cls, v: list[Recommendation]) -> list[Recommendation]:
         if len(v) not in (0, 3):
-            raise ValueError("recommendations 必须为空或正好 3 个")
+            raise ValueError("recommendations must be empty or exactly 3")
         return v
 
     @model_validator(mode="after")
     def no_recommendations_when_asking(self) -> "SubmitReply":
         if self.ask_meal_type and self.recommendations:
-            raise ValueError("ask_meal_type 为 true 时不能给推荐")
+            raise ValueError("no recommendations allowed when ask_meal_type is true")
         return self
