@@ -41,8 +41,13 @@ variable "bedrock_model_id" {
   default     = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
-variable "github_repository" {
-  description = "owner/name of the GitHub repository allowed to deploy."
+# The repository allowed to deploy, as it appears at the start of the "sub"
+# claim of its OIDC tokens. GitHub writes owner and repository with their
+# numeric IDs (immutable subject), so a new account that later takes the same
+# names does not match. Look it up with:
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+variable "github_subject_prefix" {
+  description = "Start of the OIDC sub claim of the repository allowed to deploy."
   type        = string
-  default     = "kyodaibot/mogumogu"
+  default     = "repo:kyodaibot@341212141/mogumogu@1431039109"
 }
