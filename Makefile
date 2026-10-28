@@ -176,7 +176,7 @@ AWS_REGION := ap-northeast-1
 IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile
 
 push:
-	@: "$${AWS_PROFILE:?set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make push}"
+	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make push"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "Working tree has changes; commit them first (image tags are commit IDs)"; exit 1; }
 	@set -eo pipefail; \
 	tag=$$(git rev-parse --short=12 HEAD); \
@@ -201,7 +201,7 @@ DEPLOY_BUCKET := mogumogu-deploy-teiyou416
 TAG ?= $(shell git rev-parse --short=12 HEAD)
 
 deploy:
-	@: "$${AWS_PROFILE:?set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make deploy}"
+	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make deploy"; exit 1; }
 	@set -eo pipefail; export AWS_REGION=$(AWS_REGION); tag=$(TAG); \
 	[[ $$tag =~ ^[0-9a-f]{7,40}$$ ]] || { echo "TAG must be a commit ID, got: $$tag"; exit 1; }; \
 	for svc in backend web ai; do \

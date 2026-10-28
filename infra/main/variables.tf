@@ -40,3 +40,9 @@ variable "bedrock_model_id" {
   type        = string
   default     = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
+
+variable "github_repository" {
+  description = "owner/name of the GitHub repository allowed to deploy."
+  type        = string
+  default     = "kyodaibot/mogumogu"
+}
