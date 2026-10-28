@@ -1,5 +1,6 @@
-# Checks every push to dev/master and every PR into them. Nothing is deployed
-# or pushed; the jobs only test and build.
+# Checks every push to dev/master and every PR into them. A push to master
+# that passes every check is then deployed (the deploy job); nothing else is
+# pushed or deployed.
 name: CI
 
 on:
@@ -8,7 +9,8 @@ on:
   pull_request:
     branches: [dev, master]
 
-# Read-only token: no job needs to write to the repository.
+# Read-only token: no job needs to write to the repository. The deploy job
+# adds only the right to ask GitHub for an OIDC token.
 permissions:
   contents: read
 
@@ -124,3 +126,43 @@ jobs:
       - run: docker build -f backend/Dockerfile -t mogumogu-backend:ci .
       - run: docker build -f frontend/Dockerfile -t mogumogu-web:ci .
       - run: docker build -f ai/Dockerfile -t mogumogu-ai:ci .
+
+  # Release: the same steps as `make push` and `make deploy` on a laptop, with
+  # temporary credentials for the mogumogu-deploy role (infra/main/github.tf)
+  # instead of a profile. That role only trusts pushes to master, so pull
+  # requests and other branches could not deploy even if this `if` changed.
+  # Rolling back stays manual: `make deploy TAG=<older commit>`.
+  deploy:
+    needs: [secrets, backend, frontend, ai, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    # Native arm64, like the EC2 instance: no emulation (free for public repos).
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    # One deploy at a time. A deploy in progress is never cancelled; if
+    # several pushes queue up, only the newest waiting one runs.
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Pinned to a commit, since this step handles AWS credentials (v6.3.0).
+      # Not setting `environment:` on this job matters: it would change the
+      # token's subject and the role would refuse it.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-1
+          # The log is public: hide the account ID, which appears in image
+          # names and in the deploy output.
+          mask-aws-account-id: true
+      - run: make push
+      - run: make deploy
+      # The site as a visitor sees it, after deploy.sh found every container
+      # healthy.
+      - name: Check the live site
+        run: curl -fsS --retry 5 --retry-delay 5 --retry-all-errors https://mogumogu.teiyou416.ninja/api/health/ready
