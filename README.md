@@ -2,7 +2,9 @@
 
 以日历为中心的饮食推荐应用。长期目标与约定见 [docs/project-review.md](docs/project-review.md)，API 约定见 [docs/api.md](docs/api.md)，各阶段的范围见 [plans/](plans/)。
 
-当前完成到**阶段 4a**：
+**线上地址：https://mogumogu.teiyou416.ninja** （AWS 东京区域）
+
+当前完成到**阶段 5 里程碑 2**：
 - 可以注册、登录、退出。
 - 可以填写 Profile。
 - 可以在日历上记录行程和饮食。
@@ -10,8 +12,9 @@
 - 可以用 Docker Compose 以容器方式运行整套服务（Nginx + 后端 + 数据库）。
 - 每次 push 和 PR 由 GitHub Actions 自动测试；数据库可以备份并已做过恢复演练。
 - 日历页右下角的饮食助手：根据 Profile、行程和饮食记录推荐某一餐，或回答关于自己记录的问题（Amazon Bedrock 上的 Claude，单轮对话；多轮对话在阶段 4b）。
+- 部署在 AWS 上：EC2 + RDS PostgreSQL，由 Terraform 管理（`infra/`），HTTPS 由 Caddy 提供；`make push` 和 `make deploy` 手动发布，详见 [docs/operations.md](docs/operations.md#6-云上部署aws)。
 
-日常开发时 PostgreSQL 在 Docker Compose 中运行，Go 后端、AI 服务和 Vue 前端在宿主机上运行。两种运行方式的区别、安全设计、备份与恢复的详细步骤见 [docs/operations.md](docs/operations.md)。
+日常开发时 PostgreSQL 在 Docker Compose 中运行，Go 后端、AI 服务和 Vue 前端在宿主机上运行。两种运行方式的区别、安全设计、备份与恢复、云上部署的详细步骤见 [docs/operations.md](docs/operations.md)。
 
 ## 目录结构
 
@@ -45,6 +48,9 @@ ai/                     # 饮食助手的 AI 服务（Python、uv、FastAPI、La
   src/mogumogu_ai/      # agent 循环、查询工具、提示词、Bedrock 调用
   tests/                # pytest（只用 fake 模型）
   evals/                # 用真实模型运行的评估用例（make ai-eval）
+infra/                  # Terraform：bootstrap/（状态桶）、main/（网络、EC2、RDS、ECR、IAM、预算）
+deploy/                 # 线上的 compose、Caddyfile 和服务器上执行的 deploy.sh
+scripts/                # put-secrets.sh（创建线上密钥）、seed-demo.mjs（演示数据）
 docs/  plans/           # 项目文档与阶段计划
 backups/                # make db-backup 的输出（不提交）
 ```
@@ -277,5 +283,5 @@ make db-backup   # 写到 backups/mogumogu-<时间>.dump
 - **`docker compose up` 报端口被占用**：本机已有服务占用 5432，请修改 `.env` 中的 `DB_PORT`。
 - **后端停止时，Vite 终端出现 `http proxy error … ECONNREFUSED`**：这是正常现象，页面会显示「服务器暂时不可用」。
 - **`docker compose` 报 `required variable … is missing a value`**：`.env` 缺少对应变量，请参照 `.env.example` 补上。
-- **容器方式的后端启动失败，提示 `JWT_SECRET must be at least 32 bytes`，但 `.env` 没有问题**：shell 里可能已经导出了同名变量，compose 会优先使用它。请使用 `make app-up`（会先读取 `.env`）。容器方式的其他问题见 [docs/operations.md](docs/operations.md#6-常见问题)。
+- **容器方式的后端启动失败，提示 `JWT_SECRET must be at least 32 bytes`，但 `.env` 没有问题**：shell 里可能已经导出了同名变量，compose 会优先使用它。请使用 `make app-up`（会先读取 `.env`）。容器方式的其他问题见 [docs/operations.md](docs/operations.md#7-常见问题)。
 - **`npm ci` / `npm install` 提示 `allow-scripts … fsevents`**：可以忽略。`fsevents` 是 Vite 在 macOS 上的可选依赖，已经自带编译好的二进制，不执行它的安装脚本也不影响安装、构建和运行。

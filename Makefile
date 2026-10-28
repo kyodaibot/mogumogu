@@ -12,7 +12,8 @@ AI_PORT := 8090
 WITH_ENV := set -a; . ./.env; set +a;
 
 .PHONY: help setup check-env db db-stop db-down migrate-up migrate-down migrate-version migrate-create \
-	backend backend-build frontend ai ai-eval dev test test-integration test-e2e app-up app-down app-logs db-backup
+	backend backend-build frontend ai ai-eval dev test test-integration test-e2e app-up app-down app-logs db-backup \
+	push deploy
 
 help:
 	@echo "Usage: make <target>"
@@ -38,6 +39,9 @@ help:
 	@echo "  app-up            Build images and start everything in containers: http://localhost:8000"
 	@echo "  app-down          Stop and remove all containers, including the database (data kept)"
 	@echo "  app-logs          Follow the logs of all containers (Ctrl+C stops following)"
+	@echo ""
+	@echo "  push              Build arm64 images of HEAD and push them to ECR, tagged with the commit (needs AWS_PROFILE)"
+	@echo "  deploy            Deploy a pushed commit to the EC2 instance: make deploy [TAG=<commit>] (default HEAD; an older tag rolls back)"
 	@echo ""
 	@echo "Deleting data is deliberately not a target: run 'docker compose down -v' yourself."
 
@@ -161,6 +165,66 @@ app-down: check-env
 
 app-logs: check-env
 	@$(WITH_ENV) docker compose --profile app logs -f
+
+# --- Cloud (plans/phase-5.md) ---
+# The images run on an arm64 (Graviton) EC2 instance. Each is tagged with the
+# commit it was built from; ECR tags are immutable, so a tag always means the
+# same image and deploying an old tag is a rollback. A dirty working tree is
+# refused: the image would not match the commit it is named after.
+AWS_REGION := ap-northeast-1
+# Service name -> Dockerfile. backend also provides migrate.
+IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile
+
+push:
+	@: "$${AWS_PROFILE:?set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make push}"
+	@test -z "$$(git status --porcelain)" || { echo "Working tree has changes; commit them first (image tags are commit IDs)"; exit 1; }
+	@set -eo pipefail; \
+	tag=$$(git rev-parse --short=12 HEAD); \
+	registry=$$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$(AWS_REGION).amazonaws.com; \
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $$registry >/dev/null; \
+	for item in $(IMAGES); do \
+		svc=$${item%%:*}; file=$${item#*:}; ref=$$registry/mogumogu/$$svc:$$tag; \
+		if aws ecr describe-images --region $(AWS_REGION) --repository-name mogumogu/$$svc --image-ids imageTag=$$tag >/dev/null 2>&1; then \
+			echo "mogumogu/$$svc:$$tag already in ECR, skipped"; continue; \
+		fi; \
+		echo "Building mogumogu/$$svc:$$tag"; \
+		docker build --platform linux/arm64 --provenance=false -f $$file -t $$ref . ; \
+		docker push --quiet $$ref >/dev/null; \
+		echo "Pushed mogumogu/$$svc:$$tag"; \
+	done; \
+	echo "Images for $$tag are in ECR. Deploy with: make deploy TAG=$$tag"
+
+# Copies deploy/ to the deploy bucket, then has the instance fetch it and run
+# deploy.sh through SSM Run Command (no SSH). Prints the script's output and
+# fails if it failed.
+DEPLOY_BUCKET := mogumogu-deploy-teiyou416
+TAG ?= $(shell git rev-parse --short=12 HEAD)
+
+deploy:
+	@: "$${AWS_PROFILE:?set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make deploy}"
+	@set -eo pipefail; export AWS_REGION=$(AWS_REGION); tag=$(TAG); \
+	[[ $$tag =~ ^[0-9a-f]{7,40}$$ ]] || { echo "TAG must be a commit ID, got: $$tag"; exit 1; }; \
+	for svc in backend web ai; do \
+		aws ecr describe-images --repository-name mogumogu/$$svc --image-ids imageTag=$$tag >/dev/null 2>&1 || \
+			{ echo "mogumogu/$$svc:$$tag is not in ECR; run make push on that commit first"; exit 1; }; \
+	done; \
+	instance=$$(aws ec2 describe-instances --filters Name=tag:Name,Values=mogumogu-app Name=instance-state-name,Values=running \
+		--query 'Reservations[0].Instances[0].InstanceId' --output text); \
+	[[ $$instance == i-* ]] || { echo "no running mogumogu-app instance"; exit 1; }; \
+	aws s3 sync --delete --only-show-errors deploy/ s3://$(DEPLOY_BUCKET)/deploy/; \
+	cmd=$$(aws ssm send-command --instance-ids $$instance --document-name AWS-RunShellScript \
+		--comment "deploy $$tag" --timeout-seconds 60 \
+		--parameters "{\"commands\":[\"aws s3 sync --delete --exact-timestamps --exclude .env --exclude .env.new s3://$(DEPLOY_BUCKET)/deploy/ /opt/mogumogu/\",\"bash /opt/mogumogu/deploy.sh $$tag\"],\"executionTimeout\":[\"900\"]}" \
+		--query Command.CommandId --output text); \
+	echo "Deploying $$tag to $$instance (command $$cmd)"; \
+	while :; do \
+		sleep 5; \
+		status=$$(aws ssm get-command-invocation --command-id $$cmd --instance-id $$instance --query Status --output text 2>/dev/null || echo Pending); \
+		case $$status in Pending|InProgress|Delayed) ;; *) break ;; esac; \
+	done; \
+	aws ssm get-command-invocation --command-id $$cmd --instance-id $$instance \
+		--query '[StandardOutputContent,StandardErrorContent]' --output text; \
+	[[ $$status == Success ]] || { echo "Deploy $$status"; exit 1; }
 
 frontend/node_modules: frontend/package-lock.json
 	cd frontend && npm ci

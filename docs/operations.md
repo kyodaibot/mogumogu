@@ -1,6 +1,6 @@
 # 运维说明
 
-本文件说明两种运行方式、容器方式的安全设计、CI、备份与恢复，以及常见问题。日常命令见 [README](../README.md)。
+本文件说明两种运行方式、容器方式的安全设计、CI、备份与恢复、云上部署，以及常见问题。日常命令见 [README](../README.md)。
 
 ## 1. 两种运行方式
 
@@ -29,7 +29,7 @@
 | `server_tokens off`，以及 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy` 三个响应头 | 不暴露 Nginx 版本；防止浏览器猜测内容类型、防止页面被嵌入其他网站 |
 | 请求体超过 1 MB 时，Nginx 返回与后端相同的 JSON `413 payload_too_large` | 保持 API 行为一致（docs/api.md）。64 KB 到 1 MB 之间的请求交给后端判断 |
 
-阶段 5 上云时，`TRUSTED_PROXIES` 要改成负载均衡器的地址，届时重新评估。
+云上没有负载均衡器，最前面是同一台机器上的 Caddy：Nginx 只相信来自容器网段的 `X-Forwarded-For`，后端的 `TRUSTED_PROXIES` 也是这个网段（`deploy/nginx-realip.conf`、`deploy/compose.yaml`）。
 
 ## 3. 镜像版本
 
@@ -118,7 +118,134 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 
 5. `make migrate-version` 确认版本，然后启动应用并登录检查。
 
-## 6. 常见问题
+## 6. 云上部署（AWS）
+
+线上地址：https://mogumogu.teiyou416.ninja 。设计和取舍见 [plans/phase-5.md](../plans/phase-5.md)。
+
+### 6.1 组成
+
+| 部分 | 内容 | 定义在 |
+|---|---|---|
+| 服务器 | 一台 EC2 t4g.micro（arm64），固定公网 IP；安全组只开放 80/443，没有 SSH | `infra/main/compute.tf`、`network.tf` |
+| 容器 | Caddy（HTTPS 证书自动申请和续期）→ Nginx → 后端 / AI 服务；`migrate` 每次部署先执行一次 | `deploy/compose.yaml`、`deploy/Caddyfile` |
+| 数据库 | RDS PostgreSQL 17，私有子网，只允许服务器访问，强制 TLS；每天自动备份，保留 7 天 | `infra/main/database.tf` |
+| 镜像 | ECR 的 `mogumogu/{backend,web,ai}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
+| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、`infra/main/settings.tf` |
+| 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶。**没有任何长期 Access Key** | `infra/main/iam.tf` |
+| 费用告警 | AWS Budgets，每月 50 美元，超过 50%、75%、100% 和预测超过 100% 时发邮件 | `infra/main/budgets.tf` |
+
+本机执行的 AWS 命令都使用管理员 profile：先 `aws login --profile Teiyou`，再在命令前加 `AWS_PROFILE=Teiyou`。
+
+### 6.2 首次搭建
+
+只需要做一次，按顺序执行。环境被删除后重建时也按这个顺序：
+
+1. **状态桶**：`cd infra/bootstrap && AWS_PROFILE=Teiyou terraform init && AWS_PROFILE=Teiyou terraform apply`。它的状态文件留在本地，不提交。
+2. **密钥**：`AWS_PROFILE=Teiyou scripts/put-secrets.sh`。数据库密码也在其中，必须在第 3 步之前创建。
+3. **其余资源**：把 `infra/main/terraform.tfvars.example` 复制为 `terraform.tfvars`（已被 gitignore），填上收告警的邮箱，然后在 `infra/main` 里执行 `terraform init` 和 `terraform apply`。最后会输出公网 IP。
+4. **DNS**：在 name.com 添加 A 记录 `mogumogu` → 公网 IP。生效后 Caddy 才能申请到证书。
+5. **发布**：按 6.3 执行 `make push` 和 `make deploy`。
+6. **演示数据**：见 6.8。
+
+### 6.3 发布
+
+```sh
+AWS_PROFILE=Teiyou make push     # 构建 HEAD 的 arm64 镜像并推到 ECR；工作区有未提交的改动时拒绝执行
+AWS_PROFILE=Teiyou make deploy   # 部署 HEAD；也可以指定 TAG=<12 位提交号>
+```
+
+`make deploy` 的过程如下：
+1. 确认三个镜像都已在 ECR 中。
+2. 把 `deploy/` 上传到部署桶。
+3. 通过 SSM Run Command 让服务器下载这些文件，并执行 `deploy.sh`。
+4. 等待执行完成，打印输出。失败时返回非 0。
+
+`deploy.sh` 在服务器上执行以下步骤：
+1. 从 Parameter Store 生成 `.env`，只有 root 可读。
+2. 拉取镜像。
+3. `migrate` 成功后，按顺序启动各个服务，等到全部 healthy。
+4. 清理不再使用的镜像。
+
+全过程不使用 SSH，本机和服务器都不保存长期凭证。
+
+发布后检查：
+
+```sh
+curl -s https://mogumogu.teiyou416.ninja/api/health/ready   # {"status":"ready"}
+```
+
+只发布 master 上的提交，这样线上运行的代码和 GitHub 上的 master 保持一致。合并到 master 之前，在本地依次检查：
+1. `make test`
+2. `make test-integration`
+3. 改了界面时跑 `make test-e2e`
+4. 改了 AI 时跑 `make ai-eval`
+5. 用 `make app-up` 以容器方式手动点一遍
+
+没有单独的 staging 环境。
+
+### 6.4 回滚
+
+```sh
+AWS_PROFILE=Teiyou make deploy TAG=<之前的提交号>
+```
+
+ECR 只保留最近 10 个镜像，更早的版本需要先切换到那个提交，再执行 `make push`。
+
+**数据库只向前迁移。** 旧版本的 `migrate` 不认识比它新的迁移版本，会报错退出（golang-migrate 找不到当前版本的迁移文件）。这样部署会失败，而不会让旧代码去读写新的表结构。因此：
+- 回滚的目标版本不能早于最近一次迁移。目前线上是版本 6，阶段 5 及以后的提交都可以互相回滚。
+- 新迁移应只做向后兼容的修改（例如只新增表和列）。需要撤销一次迁移时，写一个新的迁移，然后向前发布。
+- 数据本身出问题时，从 RDS 的自动备份恢复到某个时间点。恢复会生成一个新的实例，需要修改 Terraform 指向它，详见里程碑 4 的恢复演练。
+
+### 6.5 登录服务器
+
+服务器没有 SSH。需要时通过 Session Manager 登录（本机要先安装 `session-manager-plugin`）：
+
+```sh
+AWS_PROFILE=Teiyou aws ssm start-session --region ap-northeast-1 \
+  --target "$(AWS_PROFILE=Teiyou terraform -chdir=infra/main output -raw instance_id)"
+```
+
+登录后的用户是 `ssm-user`。部署目录 `/opt/mogumogu` 只有 root 可以访问，所以下面的命令都要用 `sudo`。
+
+### 6.6 查看日志
+
+登录服务器后执行：
+
+```sh
+cd /opt/mogumogu   # 先 sudo -i
+docker compose ps
+docker compose logs --tail 100 backend        # 也可以是 ai、web、caddy、migrate
+docker compose logs -f --since 10m            # 持续查看所有服务
+```
+
+每个容器的日志最多保留 3 个 10 MB 的文件（`/etc/docker/daemon.json`），重新部署后旧容器的日志会被删除。发送到 CloudWatch 属于里程碑 4。
+
+### 6.7 更换密钥
+
+`put-secrets.sh` 只创建不存在的参数。要更换某个密钥，先删除这个参数，再执行一次脚本生成新值，然后重新部署：
+
+```sh
+export AWS_PROFILE=Teiyou
+aws ssm delete-parameter --region ap-northeast-1 --name /mogumogu/jwt_secret   # 或 csrf_secret
+scripts/put-secrets.sh
+make deploy TAG=<线上当前的提交号>
+```
+
+- 更换 `jwt_secret` 后，所有人都需要重新登录。更换 `csrf_secret` 后，页面需要刷新一次。
+- **数据库密码**还需要同步修改 RDS：在删除并重新生成 `/mogumogu/db_password` 之后，把 `infra/main/database.tf` 中的 `password_wo_version` 加 1，然后执行 `terraform apply`，最后 `make deploy`。在 apply 和 deploy 之间，后端连不上数据库，网站会短暂不可用。
+
+### 6.8 演示账号
+
+`scripts/seed-demo.mjs` 只通过公开的 API 创建演示账号 `demo`，写入 Profile、最近两周的行程和饮食记录，以及明天的行程。饮食记录故意留了一些空缺，用来检查 AI 是否会把「没有记录」当成「没吃」。
+
+```sh
+read -rs DEMO_PASSWORD && export DEMO_PASSWORD   # 密码不会显示，也不写入 Git
+node scripts/seed-demo.mjs                        # 默认作用于线上；SEED_URL=http://localhost:8000 可用于本地
+```
+
+日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号和普通账号一样，每天最多可以问 AI 30 次。全站每天合计 100 次。
+
+## 7. 常见问题
 
 - **容器方式的后端启动失败，日志显示 `JWT_SECRET must be at least 32 bytes`，但 `.env` 里的值是对的**：compose 会优先使用 shell 中已经导出的同名变量，而不是 `.env`。用 `printenv JWT_SECRET | wc -c` 确认（只看长度）。`make app-*` 已经先读取 `.env` 来避免这个问题；直接运行 `docker compose` 时需要注意。
 - **改了代码，容器方式下看不到变化**：容器运行的是构建好的镜像，重新执行 `make app-up`（会重新构建）。

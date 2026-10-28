@@ -1,0 +1,12 @@
+# Caddy obtains and renews the certificate for {$DOMAIN} from Let's Encrypt
+# by itself, and redirects HTTP to HTTPS. Everything else is Nginx's job, as
+# in the local setup.
+{$DOMAIN} {
+	# Browsers remember to use HTTPS for this host for a year. Only this host:
+	# no includeSubDomains, the parent domain is not ours to decide here.
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Caddy sets X-Forwarded-For to the client address and drops any value the
+	# client sent.
+	reverse_proxy web:80
+}

@@ -190,7 +190,7 @@ allergens 的取值含义：
 | 模型 | Amazon Bedrock：Claude Haiku 4.5（暂用，目标 Haiku 5.5），日本 Geo 跨区域推理，模型 ID 可配置 |
 | Python 环境 | uv |
 | 本地容器环境 | Docker、Docker Compose |
-| Web 入口 | Nginx（前端静态文件与 API 反向代理） |
+| Web 入口 | Nginx（前端静态文件与 API 反向代理）；云上由 Caddy 在前面终止 HTTPS |
 | 提交前检查 | pre-commit、gitleaks |
 | 自动化 | GitHub Actions |
 | 云平台 | AWS |
@@ -276,7 +276,7 @@ allergens 的取值含义：
 - 数据库备份与恢复演练。
 - 可复现的启动和维护文档。
 
-AI 功能（阶段 4）排在 AWS 部署（阶段 5）之前：AI 推荐是核心功能，先完成功能再上云，云上架构（含 Python 服务）只需设计一次。
+AI 功能（阶段 4）排在 AWS 部署（阶段 5）之前：AI 推荐是核心功能，先完成功能再上云，云上架构（含 Python 服务）只需设计一次。4a（单轮对话）完成后即上云，4b（多轮对话）在云上迭代：线上可访问的版本更便于展示，部署中的问题也越早暴露越好。
 
 ### 阶段 4a：单轮对话
 
@@ -289,12 +289,13 @@ AI 功能（阶段 4）排在 AWS 部署（阶段 5）之前：AI 推荐是核�
 ### 阶段 5：AWS 部署
 
 - EC2 运行应用容器（含 Python AI 服务），RDS PostgreSQL 保存业务数据，ECR 保存容器镜像。
-- 必要的 VPC、Security Groups 和 IAM 配置；HTTPS 访问。EC2 的 IAM 角色只授予调用指定 Bedrock 模型的权限。
-- AWS Budgets 月度预算告警（初始建议 10 美元）。
+- 必要的 VPC、Security Groups 和 IAM 配置；HTTPS 访问（EC2 上的 Caddy 自动申请证书，不使用 ALB）。EC2 的 IAM 角色只授予调用指定 Bedrock 模型的权限。
+- AWS Budgets 月度预算告警（40 美元；预计每月 25～40 美元）。公开演示时全站每日额度降为 100 条。
+- 演示账号和示例数据，便于直接体验。
 - Terraform 管理云资源。
 - 逐步加入自动部署、CloudWatch、备份和回滚流程。
 
-先运行一套演示环境，接受单台应用服务器的可用性限制。
+先运行一套演示环境，接受单台应用服务器的可用性限制。详细任务与验收标准见 plans/phase-5.md。
 
 ## 10. 最终 MVP 暂不包含
 

@@ -1,0 +1,117 @@
+# The production stack on the EC2 instance (plans/phase-5.md). deploy.sh runs
+# it from /opt/mogumogu, next to the .env it generates; the ${...} values come
+# from that .env. Differences from the local compose.yaml:
+# - images come from ECR, tagged with a commit, and are never built here;
+# - no postgres: the database is RDS, reached over TLS;
+# - Caddy in front of Nginx terminates HTTPS on 80/443;
+# - the AI service gets AWS credentials from the instance role, so nothing
+#   is mounted;
+# - every service restarts on failure and after a reboot.
+# Each service gets only the variables it needs, not the whole .env.
+
+name: mogumogu
+
+x-backend-image: &backend-image ${REGISTRY}/mogumogu/backend:${TAG}
+
+services:
+  # Applies pending migrations once per deploy, then exits.
+  migrate:
+    image: *backend-image
+    command: ["/migrate", "up"]
+    environment: &db-env
+      DB_HOST: ${DB_HOST}
+      DB_PORT: "5432"
+      DB_NAME: mogumogu
+      DB_USER: mogumogu
+      DB_PASSWORD: ${DB_PASSWORD}
+      # RDS refuses unencrypted connections.
+      DB_SSLMODE: require
+
+  backend:
+    image: *backend-image
+    environment:
+      <<: *db-env
+      APP_PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET}
+      CSRF_SECRET: ${CSRF_SECRET}
+      ALLOWED_ORIGINS: https://${DOMAIN}
+      COOKIE_SECURE: "true"
+      # Nginx is the only peer; it passes on the client address it got from
+      # Caddy (nginx-realip.conf).
+      TRUSTED_PROXIES: 172.30.0.0/24
+      AI_SERVICE_URL: http://ai:8090
+      INTERNAL_PORT: "8081"
+      # Lower than the default 300 for a public demo (about 30 USD a month at
+      # most). The per-user default of 30 stays.
+      ASSISTANT_SITE_DAILY_LIMIT: "100"
+    healthcheck:
+      test: ["CMD", "/server", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 15s
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  ai:
+    image: ${REGISTRY}/mogumogu/ai:${TAG}
+    environment:
+      MODEL_PROVIDER: bedrock
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID}
+      AWS_REGION: ap-northeast-1
+      GO_INTERNAL_URL: http://backend:8081
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    image: ${REGISTRY}/mogumogu/web:${TAG}
+    volumes:
+      - ./nginx-realip.conf:/etc/nginx/conf.d/realip.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # The only service with published ports.
+  caddy:
+    image: caddy:2.11.6-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account. Kept across deploys, so a redeploy
+      # does not request a new certificate (Let's Encrypt rate-limits those).
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+networks:
+  default:
+    # A fixed range, so Nginx and the backend can name it as trusted.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:
