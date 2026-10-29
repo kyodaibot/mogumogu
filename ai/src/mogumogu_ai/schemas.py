@@ -67,6 +67,90 @@ class ReplyRequest(BaseModel):
     token: str = Field(min_length=1)
 
 
+# Atwater factors: kcal per gram of protein, carbs and fat.
+_KCAL_PER_G = {"protein_g": 4, "carbs_g": 4, "fat_g": 9}
+
+
+def _check_energy(n: "ServingNutrition | Per100gNutrition") -> None:
+    """Calories must roughly match what the three macronutrients add up to.
+
+    The 15 kcal floor keeps rounding from failing low-calorie food.
+    """
+    expected = sum(getattr(n, k) * f for k, f in _KCAL_PER_G.items())
+    if abs(expected - n.calories) > max(0.25 * n.calories, 15):
+        raise ValueError(
+            f"calories {n.calories:g} do not match protein, fat and carbs "
+            f"(4*P + 4*C + 9*F = {expected:g}); fix the numbers"
+        )
+
+
+class ServingNutrition(BaseModel):
+    """One typical serving, in total. Same ranges as a meal record."""
+
+    calories: float = Field(ge=0, le=10000, description="kcal")
+    protein_g: float = Field(ge=0, le=1000)
+    fat_g: float = Field(ge=0, le=1000)
+    carbs_g: float = Field(ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def energy_matches(self) -> "ServingNutrition":
+        _check_energy(self)
+        return self
+
+
+class Per100gNutrition(BaseModel):
+    """Per 100 g of the food (a combination: of the whole serving mixed)."""
+
+    calories: float = Field(ge=0, le=900, description="kcal per 100 g")
+    protein_g: float = Field(ge=0, le=100)
+    fat_g: float = Field(ge=0, le=100)
+    carbs_g: float = Field(ge=0, le=100)
+
+    @model_validator(mode="after")
+    def fits_in_100g(self) -> "Per100gNutrition":
+        if self.protein_g + self.fat_g + self.carbs_g > 100:
+            raise ValueError("protein, fat and carbs per 100 g add up to more than 100 g")
+        _check_energy(self)
+        return self
+
+
+class Estimate(BaseModel):
+    """A rough nutrition estimate (GLOSSARY: 营养估算), not a measurement."""
+
+    serving: ServingNutrition = Field(description="Total for one typical serving")
+    per_100g: Per100gNutrition = Field(description="Per 100 g, for reference")
+
+    @model_validator(mode="after")
+    def serving_weight_is_plausible(self) -> "Estimate":
+        # The two are given separately; the weight they imply only has to be sane.
+        if self.per_100g.calories > 0:
+            grams = self.serving.calories / self.per_100g.calories * 100
+            if not 30 <= grams <= 2000:
+                raise ValueError(
+                    f"serving and per_100g imply a serving of {grams:.0f} g, outside 30-2000 g; fix the numbers"
+                )
+        return self
+
+    def rounded(self) -> "Estimate":
+        """Serving: kcal to 10, grams to 1. Per 100 g: kcal and grams to 1."""
+        s, p = self.serving, self.per_100g
+        return Estimate.model_construct(
+            serving=ServingNutrition.model_construct(
+                calories=_round(s.calories, 10), protein_g=_round(s.protein_g),
+                fat_g=_round(s.fat_g), carbs_g=_round(s.carbs_g),
+            ),
+            per_100g=Per100gNutrition.model_construct(
+                calories=_round(p.calories), protein_g=_round(p.protein_g),
+                fat_g=_round(p.fat_g), carbs_g=_round(p.carbs_g),
+            ),
+        )
+
+
+def _round(x: float, step: int = 1) -> int:
+    # Half up, not Python's round-half-to-even; the values are never negative.
+    return int(x / step + 0.5) * step
+
+
 class Recommendation(BaseModel):
     # Limits leave room for English, which is longer than Japanese.
     name: str = Field(min_length=1, max_length=80, description="Dish or combination of foods")
@@ -76,6 +160,7 @@ class Recommendation(BaseModel):
         max_length=200,
         description="Why it suits the user, based on their profile, schedule or meal records",
     )
+    estimate: Estimate
 
 
 class SubmitReply(BaseModel):
@@ -89,6 +174,10 @@ class SubmitReply(BaseModel):
         default=False,
         description="True when the target date is not today and the user did not say which meal; then no recommendations",
     )
+    meal_type: Literal["breakfast", "lunch", "dinner", "snack"] | None = Field(
+        default=None,
+        description="The meal all three recommendations are for; required with recommendations, otherwise null",
+    )
 
     @field_validator("recommendations")
     @classmethod
@@ -101,4 +190,13 @@ class SubmitReply(BaseModel):
     def no_recommendations_when_asking(self) -> "SubmitReply":
         if self.ask_meal_type and self.recommendations:
             raise ValueError("no recommendations allowed when ask_meal_type is true")
+        if self.recommendations and self.meal_type is None:
+            raise ValueError("meal_type is required with recommendations")
+        if not self.recommendations and self.meal_type is not None:
+            raise ValueError("meal_type must be null without recommendations")
         return self
+
+    def rounded(self) -> "SubmitReply":
+        """The reply as sent to Go, with every estimate rounded."""
+        recs = [r.model_copy(update={"estimate": r.estimate.rounded()}) for r in self.recommendations]
+        return self.model_copy(update={"recommendations": recs})

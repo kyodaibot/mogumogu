@@ -13,8 +13,9 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from .model import ToolSpec
 
-# Enough for a reply and three recommendations, with room to spare.
-MAX_OUTPUT_TOKENS = 1024
+# Enough for a reply and three recommendations with their estimates, with
+# room to spare.
+MAX_OUTPUT_TOKENS = 1536
 
 
 def _tool(spec: ToolSpec) -> dict:

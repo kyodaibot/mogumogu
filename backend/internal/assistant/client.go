@@ -43,16 +43,35 @@ type Request struct {
 	Token string `json:"token"`
 }
 
+// Nutrition holds the four values of an estimate, already rounded by the AI
+// service.
+type Nutrition struct {
+	Calories float64 `json:"calories"`
+	ProteinG float64 `json:"protein_g"`
+	FatG     float64 `json:"fat_g"`
+	CarbsG   float64 `json:"carbs_g"`
+}
+
+// Estimate is a rough nutrition estimate (GLOSSARY: 营养估算). The AI service
+// validates it; Go passes it on unchanged.
+type Estimate struct {
+	Serving Nutrition `json:"serving"`
+	Per100g Nutrition `json:"per_100g"`
+}
+
 type Recommendation struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Reason      string `json:"reason"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Reason      string   `json:"reason"`
+	Estimate    Estimate `json:"estimate"`
 }
 
 type Reply struct {
 	Reply           string           `json:"reply"`
 	Recommendations []Recommendation `json:"recommendations"`
 	AskMealType     bool             `json:"ask_meal_type"`
+	// The meal the recommendations are for; null without recommendations.
+	MealType *string `json:"meal_type"`
 }
 
 type Client struct {

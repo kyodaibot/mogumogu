@@ -38,6 +38,8 @@ def test_demo_model_recommends(client):
     data = resp.json()
     assert len(data["recommendations"]) == 3
     assert data["ask_meal_type"] is False
+    assert data["meal_type"] == "lunch"
+    assert data["recommendations"][0]["estimate"]["serving"]["calories"] == 650
 
 
 def test_demo_model_asks_for_the_meal(client):

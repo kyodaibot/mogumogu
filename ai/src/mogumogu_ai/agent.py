@@ -109,7 +109,7 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str]):
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
         checked = check_reply(submit["args"], allergens) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
-            return {"result": checked}
+            return {"result": checked.rounded()}
         if state["retried"]:
             return {"error": "invalid_output"}
         feedback = f"The reply failed validation: {checked}. Fix it and call submit_reply again."

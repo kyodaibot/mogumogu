@@ -89,12 +89,21 @@ def needs_three(o: Outcome, _: Source) -> str | None:
     return None if len(o.result.recommendations) == 3 else "应有 3 个推荐"
 
 
+def recommends(meal: str) -> Callable[[Outcome, Source], str | None]:
+    """Three recommendations, all for the given meal."""
+    def check(o: Outcome, s: Source) -> str | None:
+        if problem := needs_three(o, s):
+            return problem
+        return None if o.result.meal_type == meal else f"meal_type 应为 {meal}，实际为 {o.result.meal_type}"
+    return check
+
+
 def text_only(o: Outcome, _: Source) -> str | None:
     return "不应有推荐" if o.result.recommendations else None
 
 
 def no_allergens(o: Outcome, s: Source) -> str | None:
-    if problem := needs_three(o, s):
+    if problem := recommends("lunch")(o, s):
         return problem
     shown = " ".join(f"{r.name} {r.description}" for r in o.result.recommendations)
     hits = [a for a in ("えび", "エビ", "海老", "shrimp", "prawn", "ピーナッツ", "落花生", "peanut") if a in shown.lower()]
@@ -121,7 +130,8 @@ def asks_meal(o: Outcome, s: Source) -> str | None:
 
 CASES = [
     Case("有过敏原", request("今日の昼食は何を食べたらいい？", allergens=["えび", "ピーナッツ"]), Source([]), no_allergens),
-    Case("没有任何记录", request("今日は何を食べたらいい？"), Source([]), needs_three),
+    # Now is 11:30, so the next meal is lunch.
+    Case("没有任何记录", request("今日は何を食べたらいい？"), Source([]), recommends("lunch")),
     Case("超过 31 天的记录", request("最近2か月で魚を何回食べた？", meals=HISTORY[-7:]), Source(HISTORY), within_31_days),
     Case("与饮食无关", request("秋についての詩を書いて"), Source([]), text_only),
     Case("不是今天且没说餐次", request("その日は何を食べたらいい？", target="2026-10-29"), Source([]), asks_meal),
@@ -129,7 +139,7 @@ CASES = [
     # prompt's rules keep shrimp and peanuts out (the code check cannot match).
     Case("英语 + 日语写的过敏原", request("What should I eat for lunch today?", locale="en", allergens=["えび", "ピーナッツ"]),
          Source([]), no_allergens),
-    Case("英语界面、日语提问", request("今日の夕食は何を食べたらいい？", locale="en"), Source([]), needs_three),
+    Case("英语界面、日语提问", request("今日の夕食は何を食べたらいい？", locale="en"), Source([]), recommends("dinner")),
 ]
 
 
@@ -142,13 +152,17 @@ async def main() -> int:
         ms = round((time.monotonic() - started) * 1000)
         problem = outcome.error or case.check(outcome, case.source) or in_language(outcome, case.req.context.locale)
         failed += problem is not None
-        print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.steps} 步, "
+        print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.steps} 步"
+              + ("（校验后重试）" if outcome.retried else "") + ", "
               f"输入 {outcome.input_tokens} / 输出 {outcome.output_tokens} token"
               + (f"  ← {problem}" if problem else ""))
         if outcome.result:
             print(f"      回复：{outcome.result.reply}")
             for r in outcome.result.recommendations:
                 print(f"      · {r.name}：{r.description}（{r.reason}）")
+                sv, ph = r.estimate.serving, r.estimate.per_100g
+                print(f"        一份 {sv.calories:g} kcal P{sv.protein_g:g} F{sv.fat_g:g} C{sv.carbs_g:g}；"
+                      f"每 100 g {ph.calories:g} kcal P{ph.protein_g:g} F{ph.fat_g:g} C{ph.carbs_g:g}")
         if case.source.calls:
             print("      查询：" + ", ".join(f"{k} {a}~{b}" for k, a, b in case.source.calls))
     print(f"\n{len(CASES) - failed}/{len(CASES)} passed")
