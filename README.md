@@ -63,7 +63,7 @@ ai/                     # The meal assistant's AI service (Python, uv, FastAPI, 
   evals/                # Checks against the real model (make ai-eval)
 infra/                  # Terraform: bootstrap/ (state bucket), main/ (network, EC2, RDS, ECR, IAM, budget)
 deploy/                 # Production compose file, Caddyfile and deploy.sh run on the server
-scripts/                # put-secrets.sh (production secrets), seed-demo.mjs (demo data)
+scripts/                # put-secrets.sh (production secrets), seed-demo.mjs (demo data), seed-local.mjs (local test accounts)
 docs/  plans/           # Design documents and phase plans (Chinese)
 backups/                # Output of make db-backup (not committed)
 ```

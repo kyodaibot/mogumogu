@@ -11,57 +11,14 @@
 // the window are left alone. The password never goes into Git; pass it in
 // the environment.
 
+import { event, seedAccount, weekday } from './lib/seed.mjs'
+
 const baseUrl = (process.env.SEED_URL ?? 'https://mogumogu.teiyou416.ninja').replace(/\/$/, '')
 const username = process.env.DEMO_USERNAME ?? 'demo'
 const password = process.env.DEMO_PASSWORD
 if (!password || password.length < 8) {
   console.error('Set DEMO_PASSWORD (at least 8 characters).')
   process.exit(1)
-}
-
-const DAYS = 14
-const ZONE = '+09:00'
-
-// --- A tiny client: cookies, CSRF header and Origin, like the frontend ---
-
-const cookies = new Map()
-
-async function api(method, path, body) {
-  const headers = { Origin: new URL(baseUrl).origin }
-  if (cookies.size) headers.Cookie = [...cookies].map(([k, v]) => `${k}=${v}`).join('; ')
-  if (cookies.has('mogumogu_csrf')) headers['X-CSRF-Token'] = cookies.get('mogumogu_csrf')
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  const res = await fetch(baseUrl + path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  for (const c of res.headers.getSetCookie()) {
-    const [pair] = c.split(';')
-    const i = pair.indexOf('=')
-    cookies.set(pair.slice(0, i), pair.slice(i + 1))
-  }
-  const text = await res.text()
-  return { status: res.status, data: text ? JSON.parse(text) : null }
-}
-
-async function must(method, path, body, ok = [200, 201, 204]) {
-  const r = await api(method, path, body)
-  if (!ok.includes(r.status)) {
-    throw new Error(`${method} ${path} -> ${r.status} ${JSON.stringify(r.data?.error ?? r.data)}`)
-  }
-  return r.data
-}
-
-// --- Dates in the product time zone ---
-
-function tokyoDate(offsetDays) {
-  const d = new Date(Date.now() + offsetDays * 86_400_000)
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(d) // YYYY-MM-DD
-}
-
-function weekday(date) {
-  return new Date(`${date}T12:00:00${ZONE}`).getUTCDay() // 0 = Sunday
 }
 
 // --- The demo person: a student who lifts and wants to build muscle ---
@@ -73,50 +30,6 @@ const profile = {
   has_exercise_habit: true,
   allergens: ['えび'],
   goal: 'build_muscle',
-}
-
-const breakfasts = [
-  ['オートミールと牛乳、バナナ', 420, 15, 9, 70],
-  ['全粒粉トーストとゆで卵2個', 380, 20, 14, 40],
-  ['おにぎりと味噌汁', 350, 9, 4, 68],
-  ['ギリシャヨーグルトとグラノーラ', 400, 22, 10, 52],
-]
-const lunches = [
-  ['学食の親子丼', 750, 32, 20, 105],
-  ['コンビニのサラダチキンとおにぎり', 520, 34, 9, 72],
-  ['豚骨ラーメン', 820, 25, 32, 100],
-  ['焼き鮭定食', 680, 35, 18, 85],
-  ['カレーライス', 780, 18, 24, 120],
-]
-const dinners = [
-  ['自炊のトマトと卵の炒め物、ご飯', 650, 22, 20, 90],
-  ['肉うどん', 600, 26, 14, 88],
-  ['焼き魚と野菜', 550, 38, 18, 40],
-  ['麻婆豆腐丼', 720, 28, 26, 92],
-  ['居酒屋で飲み会', null, null, null, null],
-]
-
-function meal(date, type, [content, calories, protein, fat, carbs], withNutrition) {
-  return withNutrition
-    ? { date, meal_type: type, content, calories, protein_g: protein, fat_g: fat, carbs_g: carbs }
-    : { date, meal_type: type, content }
-}
-
-// Meals for the past days and today, with gaps on purpose: real records are
-// incomplete, and the assistant must not read a missing meal as "not eaten".
-function mealsFor(date, i, isToday) {
-  const out = []
-  // No breakfast logged every third day.
-  if (i % 3 !== 1) out.push(meal(date, 'breakfast', breakfasts[i % breakfasts.length], i % 2 === 0))
-  out.push(meal(date, 'lunch', lunches[i % lunches.length], i % 4 !== 3))
-  // Today's dinner has not happened yet.
-  if (!isToday) out.push(meal(date, 'dinner', dinners[i % dinners.length], i % 5 !== 4))
-  if (i % 4 === 2) out.push(meal(date, 'snack', ['プロテインバー', 200, 20, 7, 18], true))
-  return out
-}
-
-function event(date, title, start, end, notes) {
-  return { title, starts_at: `${date}T${start}:00${ZONE}`, ends_at: `${date}T${end}:00${ZONE}`, notes: notes ?? null }
 }
 
 function eventsFor(date) {
@@ -132,46 +45,7 @@ function eventsFor(date) {
 
 // --- Run ---
 
-const from = tokyoDate(-(DAYS - 1))
-const to = tokyoDate(1)
-console.log(`Seeding ${username} at ${baseUrl}, ${from} to ${to}`)
-
-await must('GET', '/api/auth/csrf')
-const login = await api('POST', '/api/auth/login', { username, password })
-if (login.status === 200) {
-  console.log('Logged in to the existing account')
-} else if (login.status === 401) {
-  await must('POST', '/api/auth/register', { username, password }, [201])
-  console.log('Registered a new account')
-} else {
-  throw new Error(`login -> ${login.status} ${JSON.stringify(login.data?.error)}`)
-}
-
-await must('PUT', '/api/profile', profile)
-
-// Clear the window first, so a second run does not duplicate anything.
-const oldEvents = (await must('GET', `/api/schedule-events?from=${from}&to=${to}`)).items
-for (const e of oldEvents) await must('DELETE', `/api/schedule-events/${e.id}`)
-const oldMeals = (await must('GET', `/api/meal-records?from=${from}&to=${to}`)).items
-for (const m of oldMeals) await must('DELETE', `/api/meal-records/${m.id}`)
-
-let events = 0
-let meals = 0
-for (let i = 0; i <= DAYS; i++) {
-  const date = tokyoDate(i - (DAYS - 1))
-  const isToday = i === DAYS - 1
-  const isTomorrow = i === DAYS
-  for (const e of eventsFor(date)) {
-    await must('POST', '/api/schedule-events', e, [201])
-    events++
-  }
-  // Tomorrow has a schedule but no meals yet.
-  if (isTomorrow) continue
-  for (const m of mealsFor(date, i, isToday)) {
-    await must('POST', '/api/meal-records', m, [201])
-    meals++
-  }
-}
-
-await must('POST', '/api/auth/logout', undefined, [204])
-console.log(`Done: replaced ${oldEvents.length} events and ${oldMeals.length} meals with ${events} events and ${meals} meals`)
+console.log(`Seeding ${username} at ${baseUrl}`)
+const r = await seedAccount({ baseUrl, username, password, profile, eventsFor, pastDays: 14, futureDays: 1 })
+console.log(`${r.registered ? 'Registered a new account' : 'Logged in to the existing account'}, ${r.from} to ${r.to}`)
+console.log(`Done: replaced ${r.replaced.events} events and ${r.replaced.meals} meals with ${r.events} events and ${r.meals} meals`)
