@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ApiError, api, type AssistantReply } from '../api'
+import { ApiError, api, type AssistantReply, type MealRecordInput, type Recommendation } from '../api'
 import { mealQuestions, presetQuestions } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
 import { locale, t } from '../i18n'
+import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
 // chat panel. The conversation lives only in this component, so closing the
 // panel keeps it and reloading the page starts a new one.
 const props = defineProps<{ date: Ymd; today: Ymd }>()
+// A recommendation was saved as a meal record; the calendar reloads.
+const emit = defineEmits<{ 'meal-added': [] }>()
 
 const MAX_LENGTH = 500
 
@@ -23,6 +26,8 @@ interface Turn {
   reply?: AssistantReply
   error?: string
   retryable?: boolean
+  /** Indexes of recommendations already added to the meal log. */
+  added?: number[]
 }
 
 const open = ref(false)
@@ -37,6 +42,32 @@ const scroller = ref<HTMLElement>()
 const presets = computed(() => presetQuestions(props.date, props.today))
 
 let nextId = 1
+
+// The recommendation whose meal form is open; one at a time.
+const adding = ref<{ turn: number; index: number } | null>(null)
+
+// A recommendation becomes a new meal record on the turn's target date, with
+// the serving estimate as its nutrition. The user checks it before saving.
+function draftFor(turn: Turn, r: Recommendation): MealRecordInput {
+  return {
+    date: turn.date,
+    meal_type: turn.reply?.meal_type ?? 'lunch',
+    content: r.name,
+    ...r.estimate.serving,
+  }
+}
+
+async function openMealForm(turn: Turn, index: number) {
+  adding.value = { turn: turn.id, index }
+  await nextTick()
+  scroller.value?.querySelector('.rec form')?.scrollIntoView({ block: 'nearest' })
+}
+
+function mealAdded(turn: Turn, index: number) {
+  turn.added = [...(turn.added ?? []), index]
+  adding.value = null
+  emit('meal-added')
+}
 
 async function scrollToEnd() {
   await nextTick()
@@ -177,10 +208,30 @@ watch(
         <template v-else-if="turn.reply">
           <p class="bubble assistant">{{ turn.reply.reply }}</p>
           <ul v-if="turn.reply.recommendations.length" class="recs">
-            <li v-for="r in turn.reply.recommendations" :key="r.name" class="rec">
+            <li v-for="(r, i) in turn.reply.recommendations" :key="r.name" class="rec">
               <h3>{{ r.name }}</h3>
               <p class="desc">{{ r.description }}</p>
               <p class="reason">{{ r.reason }}</p>
+              <p class="estimate">
+                {{ t.assistant.estimate(r.estimate.serving) }}<br />{{ t.assistant.estimatePer100g(r.estimate.per_100g) }}
+              </p>
+              <MealForm
+                v-if="adding?.turn === turn.id && adding.index === i"
+                :meal="null"
+                :date="turn.date"
+                :draft="draftFor(turn, r)"
+                @saved="mealAdded(turn, i)"
+                @cancel="adding = null"
+              />
+              <button
+                v-else-if="turn.reply.meal_type"
+                type="button"
+                class="add"
+                :disabled="turn.added?.includes(i)"
+                @click="openMealForm(turn, i)"
+              >
+                {{ turn.added?.includes(i) ? t.assistant.added : t.assistant.addToLog }}
+              </button>
             </li>
           </ul>
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
@@ -430,6 +481,34 @@ watch(
 
 .rec .reason {
   color: var(--ink-soft);
+}
+
+.rec .estimate {
+  margin-top: 0.375rem;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+.rec .add {
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  font-size: var(--fs-small);
+}
+
+.rec .add:disabled {
+  border-color: transparent;
+  color: var(--primary);
+  opacity: 1;
+}
+
+/* The meal form opens inside the card: a divider, not a second card. */
+.rec form {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0 0;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .follow-up {

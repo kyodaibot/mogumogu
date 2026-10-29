@@ -2,6 +2,10 @@
 // have the same keys, so a missing translation fails the type check.
 // Functions are used where a value goes into the text.
 
+/** The four values of a nutrition estimate. */
+type Nutrition = { calories: number; protein_g: number; fat_g: number; carbs_g: number }
+const pfc = (n: Nutrition) => `P ${n.protein_g}g F ${n.fat_g}g C ${n.carbs_g}g`
+
 export const en = {
   common: {
     loading: 'Loading…',
@@ -144,6 +148,11 @@ export const en = {
     mealQuestion: (when: string, meal: string) => `What should I eat for ${meal} ${when}?`,
     mealNames: { breakfast: 'breakfast', lunch: 'lunch', dinner: 'dinner' },
     reviewWeek: 'Review my meals from the last 7 days',
+    /** The two estimate lines on a recommendation card. */
+    estimate: (n: Nutrition) => `About ${n.calories} kcal · ${pfc(n)} (estimate)`,
+    estimatePer100g: (n: Nutrition) => `About ${n.calories} kcal / 100g · ${pfc(n)} / 100g (estimate)`,
+    addToLog: 'Add to meal log',
+    added: 'Added ✓',
   },
   errors: {
     codes: {

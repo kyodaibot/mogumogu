@@ -70,10 +70,26 @@ export interface MealRecord extends MealRecordInput {
   updated_at: string
 }
 
+/** Four rough values from the meal assistant (GLOSSARY: 营养估算). */
+export interface Nutrition {
+  calories: number
+  protein_g: number
+  fat_g: number
+  carbs_g: number
+}
+
+export interface Estimate {
+  /** One typical serving; prefills the meal form when added to the log. */
+  serving: Nutrition
+  /** Per 100 g, for reference only; never saved. */
+  per_100g: Nutrition
+}
+
 export interface Recommendation {
   name: string
   description: string
   reason: string
+  estimate: Estimate
 }
 
 export interface AssistantReply {
@@ -82,6 +98,8 @@ export interface AssistantReply {
   recommendations: Recommendation[]
   /** The assistant asks which meal; show the three meal questions. */
   ask_meal_type: boolean
+  /** The meal the recommendations are for; null without recommendations. */
+  meal_type: MealType | null
 }
 
 let unauthorizedHandler: () => void = () => {}

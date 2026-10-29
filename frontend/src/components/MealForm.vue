@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { api, type MealRecord, type MealType } from '../api'
+import { api, type MealRecord, type MealRecordInput, type MealType } from '../api'
 import type { Ymd } from '../lib/date'
 import { MEAL_TYPES, NUTRIENTS } from '../lib/meals'
 import { errorMessage, fieldMessages } from '../lib/messages'
@@ -10,6 +10,8 @@ const props = defineProps<{
   /** Record to edit, or null to create one on `date`. */
   meal: MealRecord | null
   date: Ymd
+  /** Prefills a new record, such as a recommendation added to the log. */
+  draft?: MealRecordInput
 }>()
 const emit = defineEmits<{ saved: []; cancel: [] }>()
 
@@ -18,14 +20,15 @@ type NumberField = number | ''
 const blankOr = (v: number | null): NumberField => (v === null ? '' : v)
 const nullIfBlank = (v: NumberField) => (v === '' ? null : v)
 
+const initial = props.meal ?? props.draft
 const form = reactive({
-  date: props.meal?.date ?? props.date,
-  meal_type: (props.meal?.meal_type ?? 'lunch') as MealType,
-  content: props.meal?.content ?? '',
-  calories: blankOr(props.meal?.calories ?? null),
-  protein_g: blankOr(props.meal?.protein_g ?? null),
-  fat_g: blankOr(props.meal?.fat_g ?? null),
-  carbs_g: blankOr(props.meal?.carbs_g ?? null),
+  date: initial?.date ?? props.date,
+  meal_type: (initial?.meal_type ?? 'lunch') as MealType,
+  content: initial?.content ?? '',
+  calories: blankOr(initial?.calories ?? null),
+  protein_g: blankOr(initial?.protein_g ?? null),
+  fat_g: blankOr(initial?.fat_g ?? null),
+  carbs_g: blankOr(initial?.carbs_g ?? null),
 })
 const saving = ref(false)
 const error = ref('')

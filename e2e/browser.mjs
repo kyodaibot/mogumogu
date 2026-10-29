@@ -242,6 +242,24 @@ async function main() {
   check('each message carries its own target date',
     asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明日の夕食は何を食べたらいい？',
     asks.map((a) => `${a.date} ${a.message}`).join(' | '))
+
+  // A recommendation shows its estimate and can be added to the meal log.
+  const tomorrowRec = `document.querySelectorAll('.panel .rec')[3]`
+  const estimate = await evaluate(`${tomorrowRec}.querySelector('.estimate').innerText`)
+  check('recommendation card shows the estimate per serving and per 100 g',
+    estimate.includes('約 650 kcal · P 35g F 18g C 85g（目安）') && estimate.includes('約 163 kcal / 100g · P 9g F 4g C 21g / 100g（目安）'), estimate)
+  await evaluate(`${tomorrowRec}.querySelector('button.add').click()`)
+  await waitFor(`!!${tomorrowRec}.querySelector('form select')`, 'meal form inside the card')
+  const prefilled = await evaluate(`(() => { const f = ${tomorrowRec}.querySelector('form'); return [f.querySelector('input[type=date]').value, f.querySelector('select').value, f.querySelector('input[maxlength="200"]').value, ...[...f.querySelectorAll('input[type=number]')].map(i => i.value)].join('|') })()`)
+  check('the meal form is prefilled from the recommendation', prefilled === `${tomorrow}|dinner|照り焼きチキン丼|650|35|18|85`, prefilled)
+  await evaluate(`${tomorrowRec}.querySelector('form button[type=submit]').click()`)
+  await waitFor(`${tomorrowRec}.querySelector('button.add')?.disabled === true`, 'recommendation added')
+  const saved = requests.filter((r) => r.url === '/api/meal-records' && r.method === 'POST').map((r) => JSON.parse(r.body)).at(-1)
+  check('adding saves the serving estimate on the target date; the button says so',
+    saved?.date === tomorrow && saved.meal_type === 'dinner' && saved.calories === 650 &&
+    (await evaluate(`${tomorrowRec}.querySelector('button.add').innerText`)).includes('追加しました'), JSON.stringify(saved))
+  await waitFor(`(${tomorrowCellExpr}).getAttribute('aria-label').includes('夕食')`, 'calendar reloaded with the new dinner')
+  check('the calendar shows the added meal right away', true)
   await click('.panel .close')
   await clickText('button', '今日')
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'back to today')
