@@ -212,9 +212,19 @@ watch(
               <h3>{{ r.name }}</h3>
               <p class="desc">{{ r.description }}</p>
               <p class="reason">{{ r.reason }}</p>
-              <p class="estimate">
-                {{ t.assistant.estimate(r.estimate.serving) }}<br />{{ t.assistant.estimatePer100g(r.estimate.per_100g) }}
-              </p>
+              <div class="estimate">
+                <p class="serving">
+                  <span class="kcal">
+                    {{ t.assistant.approx }} <b>{{ r.estimate.serving.calories }}</b> kcal<span class="note">{{ t.assistant.estimateNote }}</span>
+                  </span>
+                  <span class="macros">
+                    <span class="macro p">P {{ r.estimate.serving.protein_g }}g</span>
+                    <span class="macro f">F {{ r.estimate.serving.fat_g }}g</span>
+                    <span class="macro c">C {{ r.estimate.serving.carbs_g }}g</span>
+                  </span>
+                </p>
+                <p class="per100">{{ t.assistant.estimatePer100g(r.estimate.per_100g) }}</p>
+              </div>
               <MealForm
                 v-if="adding?.turn === turn.id && adding.index === i"
                 :meal="null"
@@ -483,10 +493,70 @@ watch(
   color: var(--ink-soft);
 }
 
-.rec .estimate {
-  margin-top: 0.375rem;
-  font-size: var(--fs-small);
+/* The serving estimate stands out; per 100 g is a quiet reference line. */
+.estimate {
+  margin-top: 0.625rem;
   font-variant-numeric: tabular-nums;
+}
+
+.rec .serving {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.625rem;
+  margin: 0;
+}
+
+/* Kcal keeps its note; the three tags wrap together, never one by one. */
+.kcal {
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.macros {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.kcal b {
+  font-family: var(--font-num);
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.macro {
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  font-family: var(--font-num);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.macro.p {
+  background: var(--macro-p-soft);
+  color: var(--macro-p);
+}
+
+.macro.f {
+  background: var(--macro-f-soft);
+  color: var(--macro-f);
+}
+
+.macro.c {
+  background: var(--macro-c-soft);
+  color: var(--macro-c);
+}
+
+.note {
+  margin-left: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.rec .per100 {
+  margin-top: 0.25rem;
+  font-size: var(--fs-small);
   color: var(--ink-soft);
 }
 

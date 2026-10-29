@@ -148,8 +148,9 @@ export const en = {
     mealQuestion: (when: string, meal: string) => `What should I eat for ${meal} ${when}?`,
     mealNames: { breakfast: 'breakfast', lunch: 'lunch', dinner: 'dinner' },
     reviewWeek: 'Review my meals from the last 7 days',
-    /** The two estimate lines on a recommendation card. */
-    estimate: (n: Nutrition) => `About ${n.calories} kcal · ${pfc(n)} (estimate)`,
+    /** The estimate on a recommendation card: one serving, then per 100 g. */
+    approx: 'About',
+    estimateNote: '(estimate)',
     estimatePer100g: (n: Nutrition) => `About ${n.calories} kcal / 100g · ${pfc(n)} / 100g (estimate)`,
     addToLog: 'Add to meal log',
     added: 'Added ✓',

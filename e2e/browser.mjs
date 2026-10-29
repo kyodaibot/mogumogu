@@ -245,9 +245,9 @@ async function main() {
 
   // A recommendation shows its estimate and can be added to the meal log.
   const tomorrowRec = `document.querySelectorAll('.panel .rec')[3]`
-  const estimate = await evaluate(`${tomorrowRec}.querySelector('.estimate').innerText`)
+  const estimate = await evaluate(`[...${tomorrowRec}.querySelectorAll('.kcal, .macro, .per100')].map(e => e.textContent.trim()).join(' | ')`)
   check('recommendation card shows the estimate per serving and per 100 g',
-    estimate.includes('約 650 kcal · P 35g F 18g C 85g（目安）') && estimate.includes('約 163 kcal / 100g · P 9g F 4g C 21g / 100g（目安）'), estimate)
+    estimate === '約 650 kcal（目安） | P 35g | F 18g | C 85g | 約 163 kcal / 100g · P 9g F 4g C 21g / 100g（目安）', estimate)
   await evaluate(`${tomorrowRec}.querySelector('button.add').click()`)
   await waitFor(`!!${tomorrowRec}.querySelector('form select')`, 'meal form inside the card')
   const prefilled = await evaluate(`(() => { const f = ${tomorrowRec}.querySelector('form'); return [f.querySelector('input[type=date]').value, f.querySelector('select').value, f.querySelector('input[maxlength="200"]').value, ...[...f.querySelectorAll('input[type=number]')].map(i => i.value)].join('|') })()`)

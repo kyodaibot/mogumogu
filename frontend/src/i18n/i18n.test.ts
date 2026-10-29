@@ -63,15 +63,14 @@ describe('switching language', () => {
 describe('nutrition estimate lines', () => {
   afterEach(() => setLocale('en'))
 
-  const serving = { calories: 650, protein_g: 35, fat_g: 20, carbs_g: 80 }
   const per100g = { calories: 144, protein_g: 8, fat_g: 4, carbs_g: 18 }
 
   it('say they are estimates, in both languages', () => {
     setLocale('ja')
-    expect(t.value.assistant.estimate(serving)).toBe('約 650 kcal · P 35g F 20g C 80g（目安）')
+    expect([t.value.assistant.approx, t.value.assistant.estimateNote]).toEqual(['約', '（目安）'])
     expect(t.value.assistant.estimatePer100g(per100g)).toBe('約 144 kcal / 100g · P 8g F 4g C 18g / 100g（目安）')
     setLocale('en')
-    expect(t.value.assistant.estimate(serving)).toBe('About 650 kcal · P 35g F 20g C 80g (estimate)')
+    expect([t.value.assistant.approx, t.value.assistant.estimateNote]).toEqual(['About', '(estimate)'])
     expect(t.value.assistant.estimatePer100g(per100g)).toBe('About 144 kcal / 100g · P 8g F 4g C 18g / 100g (estimate)')
   })
 })
