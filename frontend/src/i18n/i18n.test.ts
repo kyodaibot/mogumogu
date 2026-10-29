@@ -59,3 +59,18 @@ describe('switching language', () => {
     expect(fieldMessages(err)).toEqual({ allergens: '2項目め：長すぎます' })
   })
 })
+
+describe('nutrition estimate lines', () => {
+  afterEach(() => setLocale('en'))
+
+  const per100g = { calories: 144, protein_g: 8, fat_g: 4, carbs_g: 18 }
+
+  it('say they are estimates, in both languages', () => {
+    setLocale('ja')
+    expect([t.value.assistant.approx, t.value.assistant.estimateNote]).toEqual(['約', '（目安）'])
+    expect(t.value.assistant.estimatePer100g(per100g)).toBe('約 144 kcal / 100g · P 8g F 4g C 18g / 100g（目安）')
+    setLocale('en')
+    expect([t.value.assistant.approx, t.value.assistant.estimateNote]).toEqual(['About', '(estimate)'])
+    expect(t.value.assistant.estimatePer100g(per100g)).toBe('About 144 kcal / 100g · P 8g F 4g C 18g / 100g (estimate)')
+  })
+})

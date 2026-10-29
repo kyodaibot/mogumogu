@@ -33,9 +33,14 @@ func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Repl
 	if f.fail {
 		return assistant.Reply{}, errors.New("ai service: status 503 invalid_output")
 	}
+	lunch := "lunch"
 	return assistant.Reply{
-		Reply:           "这是三个方案：",
-		Recommendations: []assistant.Recommendation{{Name: "a", Description: "b", Reason: "c"}},
+		Reply: "这是三个方案：",
+		Recommendations: []assistant.Recommendation{{Name: "a", Description: "b", Reason: "c", Estimate: assistant.Estimate{
+			Serving: assistant.Nutrition{Calories: 650, ProteinG: 35, FatG: 18, CarbsG: 85},
+			Per100g: assistant.Nutrition{Calories: 163, ProteinG: 9, FatG: 4, CarbsG: 21},
+		}}},
+		MealType: &lunch,
 	}, nil
 }
 
@@ -133,7 +138,8 @@ func TestIntegrationAssistantContext(t *testing.T) {
 
 	var got assistant.Reply
 	b.expect(200, "POST", "/api/assistant/messages", message(day(0), "  午餐吃什么  ")).json(t, &got)
-	if got.Reply != "这是三个方案：" || len(got.Recommendations) != 1 {
+	if got.Reply != "这是三个方案：" || len(got.Recommendations) != 1 || got.MealType == nil || *got.MealType != "lunch" ||
+		got.Recommendations[0].Estimate.Serving.Calories != 650 || got.Recommendations[0].Estimate.Per100g.CarbsG != 21 {
 		t.Fatalf("reply passed through: %+v", got)
 	}
 

@@ -3,6 +3,9 @@
 
 import type { Messages } from './en'
 
+type Nutrition = { calories: number; protein_g: number; fat_g: number; carbs_g: number }
+const pfc = (n: Nutrition) => `P ${n.protein_g}g F ${n.fat_g}g C ${n.carbs_g}g`
+
 export const ja: Messages = {
   common: {
     loading: '読み込み中…',
@@ -137,6 +140,11 @@ export const ja: Messages = {
     mealQuestion: (when: string, meal: string) => `${when}の${meal}は何を食べたらいい？`,
     mealNames: { breakfast: '朝食', lunch: '昼食', dinner: '夕食' },
     reviewWeek: '最近7日間の食事を振り返って',
+    approx: '約',
+    estimateNote: '（目安）',
+    estimatePer100g: (n: Nutrition) => `約 ${n.calories} kcal / 100g · ${pfc(n)} / 100g（目安）`,
+    addToLog: '食事の記録に追加',
+    added: '追加しました ✓',
   },
   errors: {
     codes: {

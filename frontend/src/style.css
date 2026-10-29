@@ -28,6 +28,14 @@
 
   --bad: #b3261e;
   --bad-soft: #fbeae8;
+
+  /* Macronutrient tags on nutrition estimates; apart from the meal colors. */
+  --macro-p: #a63f22;
+  --macro-p-soft: #fbe8e1;
+  --macro-f: #7d5a00;
+  --macro-f-soft: #f9efd2;
+  --macro-c: #2b5b99;
+  --macro-c-soft: #e3edf9;
   --ok: #2e7d4f;
   --ok-soft: #e4f2e8;
 
@@ -82,6 +90,13 @@
 
     --bad: #f28b80;
     --bad-soft: #3a1e1b;
+
+    --macro-p: #f2a08a;
+    --macro-p-soft: #3a231c;
+    --macro-f: #e8c45c;
+    --macro-f-soft: #33290f;
+    --macro-c: #98bdf0;
+    --macro-c-soft: #1c2a3e;
     --ok: #7cc79b;
     --ok-soft: #173020;
 

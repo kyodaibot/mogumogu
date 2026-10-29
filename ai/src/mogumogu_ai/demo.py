@@ -14,7 +14,20 @@ from langchain_core.messages import HumanMessage
 from .model import reply, tool_call
 
 _ASK = ("何を食べ", "what should i eat")
-_MEALS = ("朝食", "昼食", "夕食", "breakfast", "lunch", "dinner")
+_MEALS = {
+    "朝食": "breakfast", "昼食": "lunch", "夕食": "dinner",
+    "breakfast": "breakfast", "lunch": "lunch", "dinner": "dinner",
+}
+
+# The same made-up estimates in both languages; they pass the reply's checks.
+_ESTIMATES = [
+    {"serving": {"calories": 650, "protein_g": 35, "fat_g": 18, "carbs_g": 85},
+     "per_100g": {"calories": 163, "protein_g": 9, "fat_g": 4, "carbs_g": 21}},
+    {"serving": {"calories": 450, "protein_g": 15, "fat_g": 8, "carbs_g": 78},
+     "per_100g": {"calories": 150, "protein_g": 5, "fat_g": 3, "carbs_g": 26}},
+    {"serving": {"calories": 300, "protein_g": 22, "fat_g": 12, "carbs_g": 26},
+     "per_100g": {"calories": 60, "protein_g": 4, "fat_g": 2, "carbs_g": 5}},
+]
 
 _TEXT = {
     "ja": {
@@ -50,8 +63,10 @@ class DemoModel:
         first = next(m.content for m in messages if isinstance(m, HumanMessage))
         lowered = first.split("<message>")[-1].lower()
         t = _TEXT[_locale(first)]
-        if any(a in lowered for a in _ASK) and any(meal in lowered for meal in _MEALS):
-            args = {"reply": t["recommend"], "recommendations": t["recommendations"]}
+        meal_type = next((v for k, v in _MEALS.items() if k in lowered), None)
+        if any(a in lowered for a in _ASK) and meal_type:
+            recs = [{**r, "estimate": e} for r, e in zip(t["recommendations"], _ESTIMATES)]
+            args = {"reply": t["recommend"], "recommendations": recs, "meal_type": meal_type}
         elif any(a in lowered for a in _ASK):
             args = {"reply": t["ask_meal"], "ask_meal_type": True}
         else:

@@ -434,8 +434,17 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 ```json
 {
   "reply": "午後に授業があるので、腹持ちのよい案を3つ挙げます：",
+  "meal_type": "lunch",
   "recommendations": [
-    { "name": "鶏むね肉弁当", "description": "鶏むね肉と玄米", "reason": "午後に3時間の授業がある" }
+    {
+      "name": "鶏むね肉弁当",
+      "description": "鶏むね肉と玄米",
+      "reason": "午後に3時間の授業がある",
+      "estimate": {
+        "serving": { "calories": 650, "protein_g": 35, "fat_g": 18, "carbs_g": 85 },
+        "per_100g": { "calories": 163, "protein_g": 9, "fat_g": 4, "carbs_g": 21 }
+      }
+    }
   ],
   "ask_meal_type": false
 }
@@ -443,6 +452,11 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 - `reply`：必有的回复文字。
 - `recommendations`：空数组，或正好 3 个（示例为了简短只写了 1 个）。
+- `meal_type`：推荐针对的餐次（`breakfast`、`lunch`、`dinner` 或 `snack`），三个推荐属于同一餐；没有推荐时为 `null`。
+- `estimate`：营养估算（GLOSSARY），由饮食助手给出的大致数值，不是测量值，前端标明「目安」：
+  - `serving`：常见的一份的总量。热量取整到 10 kcal，三大营养素取整到 1 g。用户点击「添加到饮食记录」时，用这组数预填 `POST /api/meal-records` 的表单。
+  - `per_100g`：每 100 g 的含量，只作参考，不保存。热量和三大营养素都取整到 1。组合类推荐按整份混合后的平均值给出。
+  - AI 服务校验数值范围（与饮食记录相同；每 100 g 的热量 ≤ 900，三大营养素之和 ≤ 100 g）、热量与三大营养素是否大致相符，以及两组数推算出的份量是否在 30–2000 g 之间。
 - `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
 
 错误：`401`、`403`、`422`（`date`、`message` 或 `locale` 不合规则）、`429 rate_limited`（调用额度用完）、`503 ai_unavailable`。
