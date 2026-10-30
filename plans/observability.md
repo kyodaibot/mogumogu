@@ -1,6 +1,6 @@
 # 日志接入 CloudWatch Logs
 
-> 状态：**Terraform 已 apply，待部署**（2026-10-30）。分支 `feat/observability`，从 dev 切出。
+> 状态：**已完成**（2026-10-30），随 PR #7 上线。分支 `feat/observability`，从 dev 切出。
 
 这是 `plans/phase-5.md` 里程碑 4 的日志部分（RDS 恢复演练不在本计划内），另外加了一个 5xx 告警。phase-5 原来把「自定义告警和仪表盘」列在范围外，本计划只加这一个告警，仪表盘仍然不做。
 
@@ -12,7 +12,7 @@ nginx 已经把每个请求写成一行 JSON（时间、客户端 IP、方法、
 
 - 用 Docker 自带的 **awslogs 日志驱动**把所有容器（migrate、backend、ai、web、caddy）的输出写到 CloudWatch Logs，服务器上不装 CloudWatch Agent。
 - 一个日志组 `/mogumogu/app`，由 Terraform 创建，**保留 14 天**（日志里有客户端 IP）。容器不自动建组（`awslogs-create-group` 不开）。
-- 每个容器一个日志流，名字为「容器名/容器 ID」，例如 `mogumogu-web-1/3f2a…`，在 Logs Insights 里可以按服务筛选。
+- 每个容器一个日志流，名字为「容器名/容器 ID」，例如 `mogumogu-web-1/3f2a…`，在 Logs Analytics（原 Logs Insights）里可以按服务筛选。
 - 实例角色只能在这个日志组里建流和写入（`logs:CreateLogStream`、`logs:PutLogEvents`），不能读、不能删。
 - 日志驱动用 **non-blocking** 模式（缓冲 4 MB）：CloudWatch 暂时不可用时最多丢一些日志，而不是让应用卡住。
 - 服务器上的 `docker compose logs` 继续可用（Docker 的 dual logging 会在本地缓存一份）。
@@ -46,7 +46,7 @@ nginx 已经把每个请求写成一行 JSON（时间、客户端 IP、方法、
 
 - `docs/operations.md`：
   - 6.6「查看日志」：改为优先在 CloudWatch 查看，同时保留登录服务器查看的方法；
-  - 新增常用的 Logs Insights 查询：每小时请求数、每天独立 IP 数、访问最多的路径、5xx 明细、慢请求、饮食助手的调用次数和失败次数；
+  - 新增常用的 Logs Analytics 查询：每小时请求数、每天独立 IP 数、访问最多的路径、5xx 明细、慢请求、饮食助手的调用次数和失败次数；
   - 5xx 告警收到邮件后怎么排查。
 - `plans/phase-5.md`：里程碑 4 的日志部分标为完成，并在「不在范围内」里注明 5xx 告警已在本计划中添加。
 

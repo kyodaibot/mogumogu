@@ -222,7 +222,7 @@ AWS_PROFILE=Teiyou aws logs tail /mogumogu/app --region ap-northeast-1 --follow 
 AWS_PROFILE=Teiyou aws logs tail /mogumogu/app --region ap-northeast-1 --since 1h --log-stream-name-prefix mogumogu-backend
 ```
 
-**统计：** 在控制台打开 CloudWatch → Logs Insights，选择 `/mogumogu/app`，设置时间范围后运行查询。控制台的时间默认显示为 UTC，可以在右上角切换为本地时间。
+**统计：** 在控制台打开 CloudWatch → Logs Analytics，选择 `/mogumogu/app`，设置时间范围后运行查询。控制台的时间默认显示为 UTC，可以在右上角切换为本地时间。
 
 ```
 # 每小时的请求数
