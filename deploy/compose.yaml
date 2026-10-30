@@ -7,15 +7,32 @@
 # - the AI service gets AWS credentials from the instance role, so nothing
 #   is mounted;
 # - every service restarts on failure and after a reboot.
+# - logs go to CloudWatch Logs (plans/observability.md).
 # Each service gets only the variables it needs, not the whole .env.
 
 name: mogumogu
 
 x-backend-image: &backend-image ${REGISTRY}/mogumogu/backend:${TAG}
 
+# Docker writes each container's output to the log group from
+# infra/main/logs.tf, which must exist first: a container whose logs cannot be
+# written does not start. One stream per container, named
+# <container>/<container ID>. Non-blocking: if CloudWatch is slow, lines
+# beyond a 4 MB buffer are dropped instead of stalling the service.
+# `docker compose logs` still works from Docker's local copy.
+x-logging: &logging
+  driver: awslogs
+  options:
+    awslogs-region: ap-northeast-1
+    awslogs-group: /mogumogu/app
+    tag: "{{.Name}}/{{.ID}}"
+    mode: non-blocking
+    max-buffer-size: 4m
+
 services:
   # Applies pending migrations once per deploy, then exits.
   migrate:
+    logging: *logging
     image: *backend-image
     command: ["/migrate", "up"]
     environment: &db-env
@@ -28,6 +45,7 @@ services:
       DB_SSLMODE: require
 
   backend:
+    logging: *logging
     image: *backend-image
     environment:
       <<: *db-env
@@ -57,6 +75,7 @@ services:
         condition: service_completed_successfully
 
   ai:
+    logging: *logging
     image: ${REGISTRY}/mogumogu/ai:${TAG}
     environment:
       MODEL_PROVIDER: bedrock
@@ -72,6 +91,7 @@ services:
     restart: unless-stopped
 
   web:
+    logging: *logging
     image: ${REGISTRY}/mogumogu/web:${TAG}
     volumes:
       - ./nginx-realip.conf:/etc/nginx/conf.d/realip.conf:ro
@@ -88,6 +108,7 @@ services:
 
   # The only service with published ports.
   caddy:
+    logging: *logging
     image: caddy:2.11.6-alpine
     ports:
       - "80:80"
