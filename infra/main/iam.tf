@@ -94,6 +94,14 @@ resource "aws_iam_role_policy" "app" {
         Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.deploy.arn}/*"
       },
+      # Docker's awslogs driver: write container logs to the one group. No
+      # reading or deleting, and no creating groups.
+      {
+        Sid      = "Logs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = [aws_cloudwatch_log_group.app.arn, "${aws_cloudwatch_log_group.app.arn}:log-stream:*"]
+      },
     ]
   })
 }

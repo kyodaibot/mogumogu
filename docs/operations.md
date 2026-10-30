@@ -131,7 +131,8 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 | 数据库 | RDS PostgreSQL 17，私有子网，只允许服务器访问，强制 TLS；每天自动备份，保留 7 天 | `infra/main/database.tf` |
 | 镜像 | ECR 的 `mogumogu/{backend,web,ai}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
 | 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、`infra/main/settings.tf` |
-| 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶。**没有任何长期 Access Key** | `infra/main/iam.tf` |
+| 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶、向日志组写入日志。**没有任何长期 Access Key** | `infra/main/iam.tf` |
+| 日志和告警 | 所有容器的日志写入 CloudWatch Logs `/mogumogu/app`，保留 14 天；访客收到 5xx 时发邮件（6.6） | `infra/main/logs.tf`、`deploy/compose.yaml` |
 | 费用告警 | AWS Budgets，每月 50 美元，超过 50%、75%、100% 和预测超过 100% 时发邮件 | `infra/main/budgets.tf` |
 
 本机执行的 AWS 命令都使用管理员 profile：先 `aws login --profile Teiyou`，再在命令前加 `AWS_PROFILE=Teiyou`。
@@ -209,7 +210,66 @@ AWS_PROFILE=Teiyou aws ssm start-session --region ap-northeast-1 \
 
 ### 6.6 查看日志
 
-登录服务器后执行：
+所有容器的日志都写入 CloudWatch Logs 的日志组 `/mogumogu/app`，保留 14 天（`infra/main/logs.tf`）。每个容器一个日志流，名字是「容器名/容器 ID」，例如 `mogumogu-web-1/3f2a…`。几种日志的格式：
+- **web（nginx）**：每个请求一行 JSON，字段为 `time`、`remote_addr`（客户端 IP）、`method`、`path`（不含查询参数）、`status`、`duration_s`。只有这种日志带 `remote_addr`，统计访问量时用它来筛选。
+- **backend**：slog 输出的 JSON，请求日志的 `msg` 为 `request`，字段为 `method`、`path`、`status`、`duration_ms`；错误日志的 `level` 为 `ERROR` 或 `WARN`。
+- **ai、caddy、migrate**：普通文本或各自的 JSON。
+
+**在终端实时查看：**
+
+```sh
+AWS_PROFILE=Teiyou aws logs tail /mogumogu/app --region ap-northeast-1 --follow --since 10m
+AWS_PROFILE=Teiyou aws logs tail /mogumogu/app --region ap-northeast-1 --since 1h --log-stream-name-prefix mogumogu-backend
+```
+
+**统计：** 在控制台打开 CloudWatch → Logs Insights，选择 `/mogumogu/app`，设置时间范围后运行查询。控制台的时间默认显示为 UTC，可以在右上角切换为本地时间。
+
+```
+# 每小时的请求数
+filter ispresent(remote_addr)
+| stats count(*) as requests by bin(1h)
+
+# 每天的独立 IP 数（大致的访客数）
+filter ispresent(remote_addr)
+| stats count_distinct(remote_addr) as visitors by bin(1d)
+
+# 访问最多的路径（不含静态资源）
+filter ispresent(remote_addr) and path not like /^\/assets\//
+| stats count(*) as requests by path
+| sort requests desc
+| limit 20
+
+# 5xx 明细
+filter ispresent(remote_addr) and status >= 500
+| fields @timestamp, method, path, status, duration_s
+| sort @timestamp desc
+
+# 后端的错误和警告
+filter level = "ERROR" or level = "WARN"
+| fields @timestamp, msg, error
+| sort @timestamp desc
+
+# 慢请求（超过 1 秒）
+filter ispresent(remote_addr) and duration_s > 1
+| fields @timestamp, method, path, status, duration_s
+| sort duration_s desc
+| limit 20
+
+# 饮食助手每天的调用次数，按状态码分开（429 = 额度用完，503 = AI 服务失败）
+filter ispresent(remote_addr) and method = "POST" and path = "/api/assistant/messages"
+| stats count(*) as calls by bin(1d), status
+```
+
+查询按扫描的数据量收费，以现在的日志量每次不到 0.01 美元。
+
+**5xx 告警：** 访客在 5 分钟内收到任何一个 5xx 时，告警 `mogumogu-http-5xx` 会向预算告警的邮箱发邮件；恢复正常后再发一封。第一次 `terraform apply` 后，要先点击 AWS 发来的订阅确认邮件，才能收到告警。收到告警后：
+1. 用上面的「5xx 明细」查询找到出错的路径和时间；
+2. 用「后端的错误和警告」，或者 `--log-stream-name-prefix mogumogu-ai` 查看同一时间的日志；
+3. 如果是部署后才出现的问题，考虑回滚（6.4）。
+
+服务器整台宕机时不会产生日志，这个告警也不会触发。
+
+**在服务器上查看：** CloudWatch 不可用时，也可以登录服务器（6.5）查看 Docker 在本地保留的副本：
 
 ```sh
 cd /opt/mogumogu   # 先 sudo -i
@@ -218,7 +278,7 @@ docker compose logs --tail 100 backend        # 也可以是 ai、web、caddy、
 docker compose logs -f --since 10m            # 持续查看所有服务
 ```
 
-每个容器的日志最多保留 3 个 10 MB 的文件（`/etc/docker/daemon.json`），重新部署后旧容器的日志会被删除。发送到 CloudWatch 属于里程碑 4。
+本地副本只保留最近一部分，重新部署后旧容器的副本会被删除；CloudWatch 中的日志不受影响。
 
 ### 6.7 更换密钥
 
