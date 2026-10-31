@@ -138,6 +138,7 @@ func NewRouter(d Deps) *gin.Engine {
 	private.DELETE("/meal-records/:id", a.deleteMeal)
 
 	private.POST("/assistant/messages", a.postAssistantMessage)
+	private.POST("/assistant/proposals/:id/execute", a.executeProposal)
 
 	return r
 }

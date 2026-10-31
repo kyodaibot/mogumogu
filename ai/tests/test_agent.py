@@ -84,7 +84,9 @@ async def test_query_then_submit():
     assert source.calls[0][1:] == (date(2026, 10, 1), date(2026, 10, 14))
     results = [m for m in model.calls[1]["messages"] if isinstance(m, ToolMessage)]
     assert len(results) == 2
-    assert "焼き魚" in results[0].content and '"id"' not in results[0].content
+    # Meals keep their id (for update_meal and delete_meal); events do not.
+    assert "焼き魚" in results[0].content and '"id":1' in results[0].content
+    assert '"id"' not in results[1].content
 
 
 async def test_steps_used_up_goes_to_force_finish():

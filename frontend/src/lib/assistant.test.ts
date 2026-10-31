@@ -73,6 +73,7 @@ describe('conversation history', () => {
     })),
     ask_meal_type: false,
     meal_type: dishes.length ? 'lunch' : null,
+    proposal: null,
   })
   const done = (text: string, r: AssistantReply, date = '2026-10-31'): SentTurn => ({ date, text, status: 'done', reply: r })
 
@@ -93,8 +94,28 @@ describe('conversation history', () => {
           { name: 'カレー', description: 'カレーの説明' },
           { name: 'うどん', description: 'うどんの説明' },
         ],
+        changes: [],
       },
-      { date: '2026-11-01', message: 'あさっては？', reply: 'どの食事ですか？', recommendations: [] },
+      { date: '2026-11-01', message: 'あさっては？', reply: 'どの食事ですか？', recommendations: [], changes: [] },
+    ])
+  })
+
+  it('keeps a summary of the proposed changes', () => {
+    const meal = { date: '2026-10-30', meal_type: 'dinner' as const, calories: null, protein_g: null, fat_g: null, carbs_g: null }
+    const r: AssistantReply = {
+      ...reply('カードで確認してください。'),
+      proposal: {
+        id: 1,
+        expires_at: '2026-10-31T14:00:00+09:00',
+        changes: [
+          { op: 'update', before: { ...meal, id: 5, content: 'カレー' }, after: { ...meal, id: 5, content: 'ハヤシライス' } },
+          { op: 'delete', before: { ...meal, id: 6, content: 'サラダ' }, after: null },
+        ],
+      },
+    }
+    expect(historyOf([done('昨日の夕食はハヤシライス、サラダは消して', r)])[0].changes).toEqual([
+      { op: 'update', date: '2026-10-30', meal_type: 'dinner', content: 'ハヤシライス' },
+      { op: 'delete', date: '2026-10-30', meal_type: 'dinner', content: 'サラダ' },
     ])
   })
 

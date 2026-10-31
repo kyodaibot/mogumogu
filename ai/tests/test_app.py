@@ -125,3 +125,21 @@ def test_locale_defaults_to_english_and_rejects_others(client):
 
     req["context"]["locale"] = "zh"
     assert c.post("/internal/reply", json=req).status_code == 422
+
+
+def test_demo_model_stages_a_record_for_pro(client):
+    req = make_request("昼食にラーメンを食べた", allow_proposal=True).model_dump(mode="json", by_alias=True)
+    data = client(demo_model()).post("/internal/reply", json=req).json()
+
+    assert data["reply"].startswith("（テスト回答）変更を用意しました")
+    assert data["changes"] == [{"op": "create", "meal": {
+        "date": "2026-10-27", "meal_type": "lunch", "content": "ラーメン",
+        "nutrition": {"calories": 500, "protein_g": 20, "fat_g": 15, "carbs_g": 70},
+    }}]
+
+
+def test_demo_model_says_recording_is_pro_only(client):
+    data = client(demo_model()).post("/internal/reply", json=body("昼食にラーメンを食べた")).json()
+
+    assert "Pro" in data["reply"]
+    assert data["changes"] == []

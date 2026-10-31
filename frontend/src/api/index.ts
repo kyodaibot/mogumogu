@@ -103,6 +103,44 @@ export interface AssistantReply {
   ask_meal_type: boolean
   /** The meal the recommendations are for; null without recommendations. */
   meal_type: MealType | null
+  /** Changes to the meal log the assistant proposes (Pro); null without any. */
+  proposal: Proposal | null
+}
+
+export type ChangeOp = 'create' | 'update' | 'delete'
+
+/** A meal record in a proposal; id is absent for one still to be created. */
+export interface ProposedMeal extends MealRecordInput {
+  id?: number
+}
+
+/** before is null for a create, after for a delete. */
+export interface ProposedChange {
+  op: ChangeOp
+  before: ProposedMeal | null
+  after: ProposedMeal | null
+}
+
+/** A change proposal (GLOSSARY: 变更提案): nothing is saved until it runs. */
+export interface Proposal {
+  id: number
+  expires_at: string
+  changes: ProposedChange[]
+}
+
+export interface ChangeResult {
+  status: 'done' | 'failed' | 'skipped'
+  /** Why a change failed: the record was edited or deleted after the proposal. */
+  reason?: 'changed' | 'not_found'
+  meal_id?: number
+}
+
+/** What the history keeps of a proposed change. */
+export interface HistoryChange {
+  op: ChangeOp
+  date: string
+  meal_type: MealType
+  content: string
 }
 
 /** One earlier turn sent back with a message (docs/api.md 9.1). */
@@ -111,6 +149,7 @@ export interface HistoryTurn {
   message: string
   reply: string
   recommendations: { name: string; description: string }[]
+  changes: HistoryChange[]
 }
 
 let unauthorizedHandler: () => void = () => {}
@@ -153,4 +192,7 @@ export const api = {
    *  `history` is the conversation so far, oldest first. */
   sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en', history: HistoryTurn[]) =>
     req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }),
+  /** Runs the changes at the indexes in `accepted`; the rest are skipped. */
+  executeProposal: (id: number, accepted: number[]) =>
+    req<{ results: ChangeResult[] }>('POST', `/api/assistant/proposals/${id}/execute`, { accepted }).then((r) => r.results),
 }

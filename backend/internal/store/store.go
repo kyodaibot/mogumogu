@@ -292,3 +292,100 @@ func (s *Store) RefundAssistantQuota(ctx context.Context, userID int64, day time
 		day, userID,
 	).Error
 }
+
+// --- change proposals ---
+
+func (s *Store) CreateProposal(ctx context.Context, userID int64, changes []ProposalChange) (Proposal, error) {
+	p := Proposal{UserID: userID, Changes: JSON[[]ProposalChange]{changes}}
+	if err := s.db.WithContext(ctx).Select("UserID", "Changes").Create(&p).Error; err != nil {
+		return Proposal{}, err
+	}
+	err := s.db.WithContext(ctx).Where("id = ?", p.ID).Take(&p).Error
+	return p, err
+}
+
+// ExecuteProposal runs the user's proposal once, in one transaction: the
+// changes at the indexes in keep, in order; the rest are skipped. A change
+// whose record was edited or deleted after the proposal fails on its own and
+// the others still run. Proposals created before createdAfter have expired.
+func (s *Store) ExecuteProposal(ctx context.Context, userID, id int64, keep []int, createdAfter time.Time) (Proposal, error) {
+	var p Proposal
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// The row lock makes a second, concurrent execution wait and then see executed_at.
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND user_id = ?", id, userID).Take(&p).Error
+		if err != nil {
+			return notFound(err)
+		}
+		switch {
+		case p.ExecutedAt != nil:
+			return ErrProposalExecuted
+		case p.CreatedAt.Before(createdAfter):
+			return ErrProposalExpired
+		}
+		changes := p.Changes.V
+		results := make([]ChangeResult, len(changes))
+		for i := range results {
+			results[i] = ChangeResult{Status: ResultSkipped}
+		}
+		for _, i := range keep {
+			if i < 0 || i >= len(changes) {
+				return ErrNoSuchChange
+			}
+			r, err := runChange(tx, userID, changes[i])
+			if err != nil {
+				return err
+			}
+			results[i] = r
+		}
+		now := time.Now()
+		p.ExecutedAt, p.Results = &now, JSON[[]ChangeResult]{results}
+		return tx.Model(&p).Updates(map[string]any{"executed_at": now, "results": p.Results}).Error
+	})
+	if err != nil {
+		return Proposal{}, err
+	}
+	return p, nil
+}
+
+// runChange applies one change. Update and delete only touch the record if
+// it is unchanged since the proposal (same updated_at).
+func runChange(tx *gorm.DB, userID int64, c ProposalChange) (ChangeResult, error) {
+	if c.Op == OpCreate {
+		m := *c.After
+		m.ID, m.UserID = 0, userID
+		if err := tx.Omit("ID", "CreatedAt", "UpdatedAt").Create(&m).Error; err != nil {
+			return ChangeResult{}, err
+		}
+		return ChangeResult{Status: ResultDone, MealID: m.ID}, nil
+	}
+
+	b := c.Before
+	q := tx.Where("id = ? AND user_id = ? AND updated_at = ?", b.ID, userID, b.UpdatedAt)
+	var res *gorm.DB
+	if c.Op == OpUpdate {
+		a := c.After
+		res = q.Model(&MealRecord{}).Updates(map[string]any{
+			"date": a.Date, "meal_type": a.MealType, "content": a.Content,
+			"calories": a.Calories, "protein_g": a.ProteinG, "fat_g": a.FatG, "carbs_g": a.CarbsG,
+			"updated_at": time.Now(),
+		})
+	} else {
+		res = q.Delete(&MealRecord{})
+	}
+	if res.Error != nil {
+		return ChangeResult{}, res.Error
+	}
+	if res.RowsAffected == 1 {
+		return ChangeResult{Status: ResultDone, MealID: b.ID}, nil
+	}
+	var exists bool
+	if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM meal_records WHERE id = ? AND user_id = ?)`, b.ID, userID).
+		Scan(&exists).Error; err != nil {
+		return ChangeResult{}, err
+	}
+	if exists {
+		return ChangeResult{Status: ResultFailed, Reason: ReasonChanged}, nil
+	}
+	return ChangeResult{Status: ResultFailed, Reason: ReasonNotFound}, nil
+}

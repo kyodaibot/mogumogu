@@ -253,25 +253,33 @@ func bindMeal(c *gin.Context, userID int64) (store.MealRecord, bool) {
 		return store.MealRecord{}, false
 	}
 	var v validator
-	m := store.MealRecord{UserID: userID}
-	if in.Date == nil {
-		v.add("date", "required")
-	} else if d, err := tz.ParseDate(*in.Date); err != nil {
-		v.add("date", "invalid_format")
-	} else {
-		m.Date = d.Time()
-	}
-	m.MealType = v.oneOf("meal_type", in.MealType, "breakfast", "lunch", "dinner", "snack")
-	m.Content = v.text("content", in.Content, 1, 200)
-	m.Calories = v.decimal("calories", in.Calories, 0, 10000, false)
-	m.ProteinG = v.decimal("protein_g", in.ProteinG, 0, 1000, false)
-	m.FatG = v.decimal("fat_g", in.FatG, 0, 1000, false)
-	m.CarbsG = v.decimal("carbs_g", in.CarbsG, 0, 1000, false)
+	m := checkMeal(&v, "", in)
+	m.UserID = userID
 	if v.failed() {
 		abortValidation(c, v.errs)
 		return store.MealRecord{}, false
 	}
 	return m, true
+}
+
+// checkMeal validates a meal record's fields. prefix goes before each field
+// name in errors; change proposals check their records with it too.
+func checkMeal(v *validator, prefix string, in mealInput) store.MealRecord {
+	var m store.MealRecord
+	if in.Date == nil {
+		v.add(prefix+"date", "required")
+	} else if d, err := tz.ParseDate(*in.Date); err != nil {
+		v.add(prefix+"date", "invalid_format")
+	} else {
+		m.Date = d.Time()
+	}
+	m.MealType = v.oneOf(prefix+"meal_type", in.MealType, "breakfast", "lunch", "dinner", "snack")
+	m.Content = v.text(prefix+"content", in.Content, 1, 200)
+	m.Calories = v.decimal(prefix+"calories", in.Calories, 0, 10000, false)
+	m.ProteinG = v.decimal(prefix+"protein_g", in.ProteinG, 0, 1000, false)
+	m.FatG = v.decimal(prefix+"fat_g", in.FatG, 0, 1000, false)
+	m.CarbsG = v.decimal(prefix+"carbs_g", in.CarbsG, 0, 1000, false)
+	return m
 }
 
 func (a *api) listMeals(c *gin.Context) {
