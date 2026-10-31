@@ -30,8 +30,10 @@ type Deps struct {
 	CSRF            *auth.CSRF
 	LoginLimiter    *auth.Limiter
 	RegisterLimiter *auth.Limiter
-	AllowedOrigins  []string
-	CookieSecure    bool
+	// Messages to the meal assistant per user in a short window.
+	AssistantLimiter *auth.Limiter
+	AllowedOrigins   []string
+	CookieSecure     bool
 	// TrustedProxies are the peers whose X-Forwarded-For is believed (see
 	// config.Config). Nil means ClientIP is always the TCP peer.
 	TrustedProxies []string
@@ -51,14 +53,15 @@ type InternalDeps struct {
 }
 
 type api struct {
-	logger          *slog.Logger
-	store           *store.Store
-	sessions        *auth.Sessions
-	csrf            *auth.CSRF
-	loginLimiter    *auth.Limiter
-	registerLimiter *auth.Limiter
-	allowedOrigins  []string
-	cookieSecure    bool
+	logger           *slog.Logger
+	store            *store.Store
+	sessions         *auth.Sessions
+	csrf             *auth.CSRF
+	loginLimiter     *auth.Limiter
+	registerLimiter  *auth.Limiter
+	assistantLimiter *auth.Limiter
+	allowedOrigins   []string
+	cookieSecure     bool
 
 	assistant          Replier
 	agentTokens        *auth.AgentTokens
@@ -92,7 +95,7 @@ func NewRouter(d Deps) *gin.Engine {
 
 	a := &api{
 		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
-		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter,
+		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter, assistantLimiter: d.AssistantLimiter,
 		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
 		assistant: d.Assistant, agentTokens: d.AgentTokens,
 		assistantUserLimit: d.AssistantUserLimit, assistantSiteLimit: d.AssistantSiteLimit,

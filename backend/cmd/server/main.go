@@ -84,9 +84,11 @@ func run(logger *slog.Logger) error {
 			CSRF:            auth.NewCSRF(cfg.Auth.CSRFSecret),
 			LoginLimiter:    auth.NewLimiter(5, 15*time.Minute),
 			RegisterLimiter: auth.NewLimiter(10, time.Hour),
-			AllowedOrigins:  cfg.Auth.AllowedOrigins,
-			CookieSecure:    cfg.Auth.CookieSecure,
-			TrustedProxies:  cfg.TrustedProxies,
+			// Multi-turn chat makes quick follow-ups easy; the daily quota is separate.
+			AssistantLimiter: auth.NewLimiter(6, time.Minute),
+			AllowedOrigins:   cfg.Auth.AllowedOrigins,
+			CookieSecure:     cfg.Auth.CookieSecure,
+			TrustedProxies:   cfg.TrustedProxies,
 
 			Assistant:          assistant.NewClient(cfg.Assistant.ServiceURL),
 			AgentTokens:        agentTokens,

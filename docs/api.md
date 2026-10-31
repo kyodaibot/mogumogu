@@ -11,7 +11,7 @@
 
 - 所有接口位于 `/api` 下，不加版本前缀（只有一个自有前端，同源部署；需要不兼容修改时前后端同步发布）。
 - 请求和响应体均为 JSON（`Content-Type: application/json; charset=utf-8`），字段名使用 **snake_case**，与数据库字段一致。
-- 请求体大小上限 64 KB，超出返回 `413`。
+- 请求体大小上限 64 KB，超出返回 `413`。例外：`POST /api/assistant/messages` 为 128 KB（9.1，带对话历史）。
 - 请求体中出现未定义的字段，返回 `400 invalid_request`（便于尽早发现拼写错误）。
 - 浏览器只与同源的 `/api` 通信（开发时经 Vite 代理，部署时经 Nginx），因此不配置 CORS。
 
@@ -76,9 +76,10 @@
 | 404 | `not_found` | 资源不存在，**或属于其他用户**（两者不区分） |
 | 404 | `profile_not_found` | 当前用户尚未创建 Profile |
 | 409 | `username_taken` | 注册时用户名已被使用 |
-| 413 | `payload_too_large` | 请求体超过 64 KB |
+| 413 | `payload_too_large` | 请求体超过上限（一般为 64 KB，见 1.1） |
 | 422 | `validation_failed` | 字段值不符合规则，见 `details` |
-| 429 | `rate_limited` | 触发限流或饮食助手的调用额度用完；响应带 `Retry-After` 头（秒） |
+| 429 | `rate_limited` | 短时间内请求太多（限流，见 2.5），稍后可以重试；响应带 `Retry-After` 头（秒） |
+| 429 | `quota_exceeded` | 饮食助手今天的调用额度用完，次日恢复；响应带 `Retry-After` 头（秒，到次日 0 点） |
 | 500 | `internal_error` | 服务端错误 |
 | 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效）。不计入调用额度，可以重试 |
 
@@ -172,6 +173,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 |---|---|
 | `POST /api/auth/login` | 同一 IP + 用户名，15 分钟内失败 5 次后，返回 `429`，直到窗口结束 |
 | `POST /api/auth/register` | 同一 IP，每小时 10 次 |
+| `POST /api/assistant/messages` | 同一用户，每分钟 6 次（阶段 4b）。先于调用额度检查，被限流的消息不计入额度 |
 
 饮食助手的调用额度不是限流，规则见 9.2。
 
@@ -413,13 +415,13 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 再在前端按日期分组显示摘要。跨午夜的行程在它覆盖的每一天都显示。
 
-## 9. 饮食助手（阶段 4a）
+## 9. 饮食助手（阶段 4a、4b）
 
 术语见 GLOSSARY.md，行为约定见 project-review.md 3.6 和第 4 节。
 
 ### 9.1 `POST /api/assistant/messages`
 
-需要登录和 CSRF（同其他写接口）。一次请求就是一轮：发送一条消息，同步返回回复（最长约 30 秒，前端显示加载状态）。
+需要登录和 CSRF（同其他写接口）。一次请求就是一轮：发送一条消息和之前的对话历史，同步返回回复（最长约 30 秒，前端显示加载状态）。服务端不保存对话。请求体上限 128 KB。
 
 请求体：
 
@@ -428,6 +430,38 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 | `date` | 日期 | 必填；目标日期，即日历上选中的日期 |
 | `message` | string | 必填；去空白后 1–500 个字符 |
 | `locale` | string | 可选；`ja` 或 `en`，即当前界面语言，回复用这种语言。省略时为 `en`，其他值返回 `422 invalid_value` |
+| `history` | array | 可选；对话历史（GLOSSARY），按时间从早到晚，最多 9 轮（超过返回 `422`，`field` 为 `history`，`reason` 为 `too_long`）。省略或空数组表示新对话 |
+
+`history` 的每一项是之前成功完成的一轮：
+
+| 字段 | 类型 | 规则 |
+|---|---|---|
+| `date` | 日期 | 必填；那一轮的目标日期 |
+| `message` | string | 必填；去空白后 1–500 个字符 |
+| `reply` | string | 必填；去空白后 1–1000 个字符 |
+| `recommendations` | array | 可选；0 个或 3 个（其他数量返回 `invalid_value`），每项只有 `name`（1–80 个字符）和 `description`（1–200 个字符） |
+
+错误的 `field` 形如 `history[2].reply`、`history[0].recommendations[1].name`。历史由前端提交，可能被修改，Go 只校验格式和长度，不校验内容（project-review.md 3.6）。
+
+```json
+{
+  "date": "2026-10-31",
+  "message": "ご飯なしにして",
+  "locale": "ja",
+  "history": [
+    {
+      "date": "2026-10-31",
+      "message": "明日の昼食は何がいい？",
+      "reply": "明日の昼食に3つ提案します：",
+      "recommendations": [
+        { "name": "親子丼", "description": "鶏肉と卵の丼" },
+        { "name": "焼き鮭定食", "description": "焼き鮭とご飯、味噌汁" },
+        { "name": "カレーライス", "description": "野菜たっぷりのカレー" }
+      ]
+    }
+  ]
+}
+```
 
 成功 `200`：
 
@@ -459,12 +493,13 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
   - AI 服务校验数值范围（与饮食记录相同；每 100 g 的热量 ≤ 900，三大营养素之和 ≤ 100 g）、热量与三大营养素是否大致相符，以及两组数推算出的份量是否在 30–2000 g 之间。
 - `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
 
-错误：`401`、`403`、`422`（`date`、`message` 或 `locale` 不合规则）、`429 rate_limited`（调用额度用完）、`503 ai_unavailable`。
+错误：`401`、`403`、`413`（超过 128 KB）、`422`（`date`、`message`、`locale` 或 `history` 不合规则）、`429 rate_limited`（每分钟限流）、`429 quota_exceeded`（调用额度用完）、`503 ai_unavailable`。
 
 ### 9.2 调用额度
 
 - 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天 30 条，全站每天 300 条，可通过环境变量调整。
-- 额度在调用 AI 服务前检查并占用；用完时返回 `429 rate_limited`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。
+- 额度在调用 AI 服务前检查并占用；用完时返回 `429 quota_exceeded`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。
+- 另有每用户每分钟 6 条的限流（2.5），在额度之前检查；超过时返回 `429 rate_limited`，不占用额度。
 - 返回 `503 ai_unavailable` 的消息退还额度。
 
 ### 9.3 内部接口（只供 AI 服务调用）

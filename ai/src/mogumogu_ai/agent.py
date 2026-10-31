@@ -145,7 +145,7 @@ async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> 
     profile = req.context.profile
     graph = build_graph(model, source, (profile.allergens or []) if profile else [])
     init: State = {
-        "messages": [HumanMessage(first_message(req.context, req.message))],
+        "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "steps": 0,
         "retried": False,
         "result": None,

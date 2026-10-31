@@ -3,8 +3,10 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,11 @@ const (
 	// The agent's query tools may read at most this many days at once.
 	agentMaxRangeDays = 31
 	ctxAgentUser      = "agent_user"
+
+	// A conversation has at most 10 turns: 9 in the history plus this one.
+	maxHistoryTurns = 9
+	// Nine turns of Japanese at their length limits come to about 60 KB.
+	assistantMaxBodyBytes = 128 << 10
 )
 
 // Replier is the AI service; *assistant.Client satisfies it.
@@ -34,6 +41,57 @@ type assistantInput struct {
 	// Language of the interface, which the reply follows: "ja" or "en".
 	// Optional; English when absent.
 	Locale *string `json:"locale"`
+	// Earlier turns, oldest first. Optional; absent for a new conversation.
+	History []turnInput `json:"history"`
+}
+
+type turnInput struct {
+	Date            *string     `json:"date"`
+	Message         *string     `json:"message"`
+	Reply           *string     `json:"reply"`
+	Recommendations []dishInput `json:"recommendations"`
+}
+
+type dishInput struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+}
+
+// history checks the turns the browser sent. They are only checked for shape
+// and the same limits the AI service's own output has; their content is not
+// trusted (project-review 3.6).
+func (v *validator) history(in []turnInput) []assistant.Turn {
+	if len(in) > maxHistoryTurns {
+		v.add("history", "too_long")
+		return nil
+	}
+	out := make([]assistant.Turn, 0, len(in))
+	for i, t := range in {
+		field := func(name string) string { return fmt.Sprintf("history[%d].%s", i, name) }
+		turn := assistant.Turn{Recommendations: []assistant.TurnDish{}}
+		if t.Date == nil {
+			v.add(field("date"), "required")
+		} else if d, err := tz.ParseDate(*t.Date); err != nil {
+			v.add(field("date"), "invalid_format")
+		} else {
+			turn.Date = d.String()
+		}
+		turn.Message = v.text(field("message"), t.Message, 1, 500)
+		turn.Reply = v.text(field("reply"), t.Reply, 1, 1000)
+		// A reply has no recommendations or exactly three.
+		if n := len(t.Recommendations); n != 0 && n != 3 {
+			v.add(field("recommendations"), "invalid_value")
+		}
+		for j, r := range t.Recommendations {
+			prefix := fmt.Sprintf("%s[%d].", field("recommendations"), j)
+			turn.Recommendations = append(turn.Recommendations, assistant.TurnDish{
+				Name:        v.text(prefix+"name", r.Name, 1, 80),
+				Description: v.text(prefix+"description", r.Description, 1, 200),
+			})
+		}
+		out = append(out, turn)
+	}
+	return out
 }
 
 // postAssistantMessage answers one message to the meal assistant
@@ -41,7 +99,7 @@ type assistantInput struct {
 func (a *api) postAssistantMessage(c *gin.Context) {
 	sess, _ := sessionOf(c)
 	var in assistantInput
-	if !decodeJSON(c, &in) {
+	if !decodeJSONLimit(c, &in, assistantMaxBodyBytes) {
 		return
 	}
 	var v validator
@@ -63,17 +121,27 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 			v.add("locale", "invalid_value")
 		}
 	}
+	history := v.history(in.History)
 	if v.failed() {
 		abortValidation(c, v.errs)
 		return
 	}
+
+	// Too many messages in a short time are refused before the daily quota,
+	// so they do not use it up.
+	limitKey := strconv.FormatInt(sess.UserID, 10)
+	if blocked, retry := a.assistantLimiter.Blocked(limitKey); blocked {
+		abortRateLimited(c, retry)
+		return
+	}
+	a.assistantLimiter.Add(limitKey)
 
 	ctx := c.Request.Context()
 	now := time.Now()
 	today := tz.Today(now)
 	err := a.store.TakeAssistantQuota(ctx, sess.UserID, today.Time(), a.assistantUserLimit, a.assistantSiteLimit)
 	if errors.Is(err, store.ErrQuotaExceeded) {
-		abortRateLimited(c, today.AddDays(1).Start().Sub(now))
+		abortQuotaExceeded(c, today.AddDays(1).Start().Sub(now))
 		return
 	}
 	if err != nil {
@@ -81,7 +149,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		return
 	}
 
-	reply, err := a.askAssistant(ctx, sess.UserID, target, message, locale, now)
+	reply, err := a.askAssistant(ctx, sess.UserID, target, message, locale, history, now)
 	if err != nil {
 		// The message was not answered, so it does not count. The request may
 		// have been cancelled; the refund must still happen.
@@ -97,7 +165,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 
 // askAssistant assembles the initial context (project-review 3.6) and calls
 // the AI service.
-func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, message, locale string, now time.Time) (assistant.Reply, error) {
+func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, error) {
 	var profile any
 	p, err := a.store.GetProfile(ctx, userID)
 	switch {
@@ -135,6 +203,7 @@ func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, me
 
 	return a.assistant.Reply(ctx, assistant.Request{
 		Message: message,
+		History: history,
 		Token:   a.agentTokens.Issue(userID),
 		Context: assistant.Context{
 			TargetDate:  target.String(),

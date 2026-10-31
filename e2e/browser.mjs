@@ -242,6 +242,19 @@ async function main() {
   check('each message carries its own target date',
     asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明日の夕食は何を食べたらいい？',
     asks.map((a) => `${a.date} ${a.message}`).join(' | '))
+  check('each message carries the answered turns before it as history',
+    asks[0].history.length === 0 && asks[1].history.length === 1 && asks[1].history[0].recommendations.length === 3 &&
+    asks[2].history.length === 2 && asks[2].history[1].message === 'その日は何を食べたらいい？' && !('reason' in asks[1].history[0].recommendations[0]),
+    asks.map((a) => a.history.length).join(' / '))
+
+  // A follow-up only makes sense with the history: the fake model names the
+  // earlier recommendation it builds on.
+  await fill('#assistant-input', 'ご飯なしで')
+  await click('.composer button[type=submit]')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 9`, 'follow-up recommendations')
+  const followUp = await evaluate(`[...document.querySelectorAll('.panel .bubble.assistant')].at(-1).innerText`)
+  const followAsk = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body)).at(-1)
+  check('a follow-up is answered from the history', followUp.includes('照り焼きチキン丼') && followAsk.history.length === 3, followUp)
 
   // A recommendation shows its estimate and can be added to the meal log.
   const tomorrowRec = `document.querySelectorAll('.panel .rec')[3]`
@@ -260,6 +273,10 @@ async function main() {
     (await evaluate(`${tomorrowRec}.querySelector('button.add').innerText`)).includes('追加しました'), JSON.stringify(saved))
   await waitFor(`(${tomorrowCellExpr}).getAttribute('aria-label').includes('夕食')`, 'calendar reloaded with the new dinner')
   check('the calendar shows the added meal right away', true)
+
+  await click('.panel .new')
+  await waitFor(`!!document.querySelector('.panel .intro .chip') && !document.querySelector('.panel .bubble')`, 'new chat')
+  check('a new chat clears the conversation', !(await evaluate(`!!${q('.panel .new')}`)))
   await click('.panel .close')
   await clickText('button', '今日')
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'back to today')
@@ -367,6 +384,7 @@ async function main() {
   const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
   check('an English question asks for, and gets, an English reply',
     JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
+  check('the first message of a new chat has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.day.today')`, 'calendar after reload')
