@@ -1,4 +1,4 @@
-// The interface language: Japanese or English (plans/i18n.md).
+// The interface language: Japanese or English (plans/archive/i18n.md).
 //
 // The first visit follows the browser: the first of its languages that is
 // Japanese or English wins, otherwise English. A choice made with the

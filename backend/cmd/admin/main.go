@@ -1,5 +1,5 @@
 // Command admin changes what only an administrator may change. It talks to
-// the database directly and is not reachable over HTTP (plans/account-tiers.md).
+// the database directly and is not reachable over HTTP (plans/archive/account-tiers.md).
 //
 //	go run ./cmd/admin users                          list users and their tiers
 //	go run ./cmd/admin tier <username> <normal|pro>   change a user's tier
