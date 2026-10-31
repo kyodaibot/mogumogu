@@ -10,7 +10,8 @@ The design documents are in Chinese: long-term goals and shared conventions in [
 
 - Sign up, log in and out; fill in a profile (body data, goal, allergens).
 - Record schedule events and meals on a calendar. Each day shows a meal tray, so a missing meal stands out.
-- Meal assistant (bottom right of the calendar): suggests three options for a meal, or answers questions about your own records. It runs on Claude (Amazon Bedrock) with a LangGraph agent that may query older records through the Go backend. Single-turn for now; multi-turn chat is phase 4b.
+- Meal assistant (bottom right of the calendar): suggests three options for a meal, or answers questions about your own records. It runs on Claude (Amazon Bedrock) with a LangGraph agent that may query older records through the Go backend. A conversation keeps up to 10 turns, so follow-ups like "without rice" work; a reload or "New chat" starts over.
+- Account tiers: every account is Normal (30 assistant messages a day); an administrator can make one Pro (100 a day) on the server. Pro accounts show a "Pro" badge.
 - Japanese and English interface. The first visit follows the browser language; the header switch remembers your choice. The assistant answers in the interface language.
 - Data in PostgreSQL, isolated per user. Cookie sessions with CSRF protection and login rate limits.
 
@@ -40,6 +41,7 @@ backend/                # Go backend (Gin, GORM, log/slog)
   Dockerfile            # Multi-stage; runs as non-root on distroless
   cmd/server/           # Backend entry point
   cmd/migrate/          # Database migration command
+  cmd/admin/            # Account administration (tiers); no HTTP API
   migrations/           # Numbered SQL migrations
   internal/auth/        # Password hashing, session JWTs, CSRF tokens, rate limits
   internal/config/      # Reading and checking the environment
@@ -133,6 +135,7 @@ This starts the database, applies pending migrations, then runs the backend, the
 | `make frontend` | Frontend dev server only (foreground, :5173) |
 | `make ai` | AI service only (foreground, 127.0.0.1:8090) |
 | `make ai-eval` | Run the assistant's evaluation cases against the real model (a few cents per run) |
+| `make admin ARGS="users"` | List local users and their tiers; `ARGS="tier <username> <normal\|pro>"` changes a tier (docs/operations.md 6.10) |
 | `make migrate-up` | Apply all pending migrations |
 | `make migrate-down` | Roll back the latest migration (one step) |
 | `make migrate-version` | Show the current migration version |
@@ -224,11 +227,11 @@ make test-integration   # needs the database running; includes the integration t
 make test-e2e           # browser end-to-end test, see below
 ```
 
-- **Integration tests**: each test **creates its own database** `mogumogu_test_*` on the compose PostgreSQL, migrates it and drops it afterwards, so development data is never touched. Without `TEST_DATABASE_URL` (for example a plain `go test ./...`) they are skipped with a note. They cover user isolation, persistence, events across midnight, null versus 0 in nutrition, token revocation on logout, CSRF bound to the session, login rate limits, and the assistant's context, language and quota.
+- **Integration tests**: each test **creates its own database** `mogumogu_test_*` on the compose PostgreSQL, migrates it and drops it afterwards, so development data is never touched. Without `TEST_DATABASE_URL` (for example a plain `go test ./...`) they are skipped with a note. They cover user isolation, persistence, events across midnight, null versus 0 in nutrition, token revocation on logout, CSRF bound to the session, login rate limits, and the assistant's context, language, history, rate limit and per-tier quota.
 - **AI service tests** (pytest): only a scripted fake model, no AWS. They cover every path of the agent loop (step limit, forced finish, one validation retry, allergen check, at most 6 model calls), the query tools' date limits and error handling, and the reply language setting.
-- **Evaluation** (`make ai-eval`, not part of `make test`): 7 cases against the real model, in Japanese and English (allergens, no records, more than 31 days of records, an off-topic request, no meal given, allergens typed in Japanese with an English interface, a Japanese question with an English interface). Each reply, its step count, tokens and time are printed, and the reply language is checked.
+- **Evaluation** (`make ai-eval`, not part of `make test`): 12 cases against the real model, in Japanese and English (allergens, no records, more than 31 days of records, an off-topic request, no meal given, allergens typed in Japanese with an English interface, a Japanese question with an English interface), and five multi-turn ones (a follow-up without rice, "the second one", a forged history claiming an allergen is fine in Japanese and English, nine turns of history). Each reply, its step count, tokens and time are printed, and the reply language is checked.
 - **Frontend tests** (Vitest): the calendar grid (weeks start on Monday), Asia/Tokyo date arithmetic, date formats and assistant questions in both languages, language detection, matching Japanese and English dictionaries, and the API client reading the latest CSRF token for every write.
-- **End-to-end test** (`make test-e2e`, in `e2e/`): headless Chrome with a Japanese browser language goes through the whole flow: sign-up, profile, calendar create/edit/delete, data after a reload, logout and login again. It also checks CSRF token rotation, the Origin header, and the assistant (preset questions give 3 cards, a new date adds a divider and keeps earlier messages, each message carries its own date and language, a reload starts a new conversation). Finally it switches to English and checks that the interface and the assistant follow, and that the choice survives a reload.
+- **End-to-end test** (`make test-e2e`, in `e2e/`): headless Chrome with a Japanese browser language goes through the whole flow: sign-up, profile, calendar create/edit/delete, data after a reload, logout and login again. It also checks CSRF token rotation, the Origin header, and the assistant (preset questions give 3 cards, a new date adds a divider and keeps earlier messages, each message carries its own date and language, a follow-up is answered from the history, "New chat" clears it, a reload starts a new conversation), and that an account made Pro with `cmd/admin` shows the badge. Finally it switches to English and checks that the interface and the assistant follow, and that the choice survives a reload.
   - The test **creates and removes its own data**: a throwaway database `mogumogu_e2e_*` on the compose PostgreSQL, with the backend, the AI service (fake model, no AWS) and Vite on their own ports (18080 plus internal 18081, 18090, 15173). Whether it passes, fails or is interrupted with Ctrl+C, the processes are stopped and the database dropped. Development data is never read or changed, and a running `make dev` is not disturbed.
   - Needs Google Chrome or Chromium (found automatically on macOS; elsewhere set `CHROME=/path/to/chrome`), Node 24 or later and uv. No extra npm packages.
 

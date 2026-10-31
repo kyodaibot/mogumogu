@@ -25,6 +25,7 @@ type credentialsInput struct {
 type userJSON struct {
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`
+	Tier      string `json:"tier"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -35,7 +36,7 @@ type meJSON struct {
 }
 
 func toUserJSON(u store.User) userJSON {
-	return userJSON{ID: u.ID, Username: u.Username, CreatedAt: tz.FormatInstant(u.CreatedAt)}
+	return userJSON{ID: u.ID, Username: u.Username, Tier: string(u.Tier), CreatedAt: tz.FormatInstant(u.CreatedAt)}
 }
 
 func (a *api) getCSRF(c *gin.Context) {

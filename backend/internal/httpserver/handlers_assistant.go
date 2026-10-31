@@ -139,9 +139,21 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 	ctx := c.Request.Context()
 	now := time.Now()
 	today := tz.Today(now)
-	err := a.store.TakeAssistantQuota(ctx, sess.UserID, today.Time(), a.assistantUserLimit, a.assistantSiteLimit)
-	if errors.Is(err, store.ErrQuotaExceeded) {
-		abortQuotaExceeded(c, today.AddDays(1).Start().Sub(now))
+	// The tier is read on every message, so a change takes effect at once.
+	user, err := a.store.UserByID(ctx, sess.UserID)
+	if err != nil {
+		abortInternal(c, a.logger, err)
+		return
+	}
+	userLimit := a.assistantLimits.forTier(user.Tier)
+	err = a.store.TakeAssistantQuota(ctx, sess.UserID, today.Time(), userLimit, a.assistantLimits.Site)
+	switch {
+	case errors.Is(err, store.ErrUserQuotaExceeded):
+		abortQuotaExceeded(c, today.AddDays(1).Start().Sub(now), userLimit)
+		return
+	case errors.Is(err, store.ErrSiteQuotaExceeded):
+		// Not the user's own limit, so no number to show them.
+		abortQuotaExceeded(c, today.AddDays(1).Start().Sub(now), 0)
 		return
 	}
 	if err != nil {

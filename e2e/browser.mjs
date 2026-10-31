@@ -23,6 +23,16 @@ if (!profileDir) {
 }
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 
+// Changes an account tier the only way there is: cmd/admin on the database.
+function setTier(username, tier) {
+  if (!process.env.E2E_DB) throw new Error('E2E_DB is not set (run through e2e/run.sh)')
+  execFileSync('go', ['run', './cmd/admin', 'tier', username, tier], {
+    cwd: new URL('../backend', import.meta.url).pathname,
+    env: { ...process.env, DB_NAME: process.env.E2E_DB },
+    stdio: 'ignore',
+  })
+}
+
 function findChrome() {
   if (process.env.CHROME) {
     if (existsSync(process.env.CHROME)) return process.env.CHROME
@@ -320,6 +330,10 @@ async function main() {
   await waitFor(`document.body.innerText.includes('E2E サラダチキン（大盛り）') && !document.querySelector('select')`, 'meal edited')
   check('meal edited', true)
 
+  check('a new account is normal: no Pro badge', !(await evaluate(`!!${q('.tier')}`)))
+  // Made Pro before the reload, which then shows the badge.
+  setTier(username, 'pro')
+
   // Persistence: reload. Page.reload returns before the new document exists, so
   // mark the old one and wait until the mark is gone and the data is rendered.
   await evaluate('window.__beforeReload = true')
@@ -327,6 +341,7 @@ async function main() {
   await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
     document.body.innerText.includes('E2E 夜間の実験') && document.body.innerText.includes('（大盛り）')`, 'data after reload')
   check('data still there after reload', true)
+  check('after the admin command makes the account Pro, the badge shows', (await textOf('.tier')) === 'Pro', await textOf('.tier'))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
   check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))

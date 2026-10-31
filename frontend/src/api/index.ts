@@ -4,9 +4,12 @@ import { createClient, readDocumentCookie, type RequestOptions } from './client'
 
 export { ApiError, type FieldError } from './client'
 
+export type Tier = 'normal' | 'pro'
+
 export interface User {
   id: number
   username: string
+  tier: Tier
   created_at: string
 }
 

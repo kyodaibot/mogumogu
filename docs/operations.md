@@ -303,7 +303,7 @@ read -rs DEMO_PASSWORD && export DEMO_PASSWORD   # 密码不会显示，也不�
 node scripts/seed-demo.mjs                        # 默认作用于线上；SEED_URL=http://localhost:8000 可用于本地
 ```
 
-日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号和普通账号一样，每天最多可以问 AI 30 次。全站每天合计 100 次。
+日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号的密码是公开的，所以始终保持 Normal 等级（6.10），每天最多可以问 AI 30 次。全站每天合计 100 次。
 
 ### 6.9 本地测试账号
 
@@ -311,7 +311,7 @@ node scripts/seed-demo.mjs                        # 默认作用于线上；SEED
 
 | 账号 | 人物 | 行程（过去 14 天到未来 7 天） |
 |---|---|---|
-| `busy` | 上班族，减脂 | 约 85 条：工作日每天 4–5 个，有紧挨着、重叠和跨午夜的行程，周末也有安排 |
+| `busy`（Pro） | 上班族，减脂 | 约 85 条：工作日每天 4–5 个，有紧挨着、重叠和跨午夜的行程，周末也有安排 |
 | `normal` | 学生，增肌 | 约 35 条：与演示账号相同的课程、实验和健身 |
 | `light` | 自由职业者，减脂，过敏原「えび」 | 约 4–5 条：周六瑜伽，隔周三晚饭 |
 
@@ -320,7 +320,27 @@ make dev           # 另开一个终端先启动本地服务
 make seed-local    # 密码是 .env 中的 SEED_PASSWORD
 ```
 
-和 6.8 一样，重新执行会删除这三个账号在这段时间内的记录再重新写入。脚本默认使用 `http://localhost:5173`，`SEED_URL` 可以改为 `http://localhost:8000`（`make app-up`）；不是本机地址时脚本会拒绝运行。修改 `SEED_PASSWORD` 后，已存在的账号会因为密码不一致而登录失败，这时需要先删除这些账号，或者改回原来的密码。
+脚本完成后，`make seed-local` 用 `cmd/admin` 把 `busy` 设为 Pro，另外两个账号保持 Normal，用来对比两种等级。和 6.8 一样，重新执行会删除这三个账号在这段时间内的记录再重新写入。脚本默认使用 `http://localhost:5173`，`SEED_URL` 可以改为 `http://localhost:8000`（`make app-up`）；不是本机地址时脚本会拒绝运行。修改 `SEED_PASSWORD` 后，已存在的账号会因为密码不一致而登录失败，这时需要先删除这些账号，或者改回原来的密码。
+
+### 6.10 账号等级
+
+账号等级（Normal、Pro，见 plans/account-tiers.md）只能用 `cmd/admin` 修改。它直接连接数据库，没有对应的 API，也没有管理页面，所以只有能登录服务器的人才能修改。修改后立即生效，用户不需要重新登录。
+
+```sh
+# 本地（作用于 .env 中的数据库）
+make admin ARGS="users"
+make admin ARGS="tier busy pro"
+
+# 线上：先登录服务器（6.5），再执行
+sudo -i
+cd /opt/mogumogu
+docker compose run --rm migrate /admin users
+docker compose run --rm migrate /admin tier <username> pro     # 或 normal
+```
+
+- 线上借用 `migrate` 服务运行，因为它用的是同一个 backend 镜像，并且已经有数据库的连接设置；`/admin` 替换了它原来的 `/migrate up` 命令，不会执行迁移。
+- 输出同样会写入 CloudWatch Logs（日志流 `mogumogu-migrate-run-…`），其中包含用户名。
+- 不要把演示账号设为 Pro：它的密码是公开的，任何人都能用它把全站当天的额度用完。
 
 ## 7. 常见问题
 

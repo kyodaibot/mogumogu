@@ -111,6 +111,16 @@ describe('errors', () => {
     expect(err).toMatchObject({ status: 422, code: 'validation_failed', details: [{ field: 'ends_at', reason: 'must_be_after_starts_at' }] })
   })
 
+  it('keeps the quota limit when there is one', async () => {
+    const quota = (limit?: number) => () => json(429, { error: { code: 'quota_exceeded', message: 'x', limit } })
+    const t = setup([quota(30), quota()])
+    t.cookies[CSRF_COOKIE] = 'tok'
+    await expect(t.client.request('POST', '/api/assistant/messages', {})).rejects.toMatchObject({ code: 'quota_exceeded', limit: 30 })
+    const err = await t.client.request('POST', '/api/assistant/messages', {}).catch((e: ApiError) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).limit).toBeUndefined()
+  })
+
   it('reports 401 to onUnauthorized unless quiet', async () => {
     const unauth = () => json(401, { error: { code: 'unauthenticated', message: '' } })
     const t = setup([unauth, unauth])

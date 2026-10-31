@@ -29,6 +29,8 @@ type errorBody struct {
 	Code    string       `json:"code"`
 	Message string       `json:"message"`
 	Details []fieldError `json:"details,omitempty"`
+	// Limit is the user's own daily quota, on quota_exceeded only.
+	Limit int `json:"limit,omitempty"`
 }
 
 func abortError(c *gin.Context, status int, code, message string) {
@@ -47,10 +49,13 @@ func abortRateLimited(c *gin.Context, retryAfter time.Duration) {
 }
 
 // abortQuotaExceeded answers a message over the daily quota of the meal
-// assistant; Retry-After points at the next day.
-func abortQuotaExceeded(c *gin.Context, retryAfter time.Duration) {
+// assistant; Retry-After points at the next day. limit is the user's own
+// quota when that is what ran out, or 0 when the site's did.
+func abortQuotaExceeded(c *gin.Context, retryAfter time.Duration, limit int) {
 	c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-	abortError(c, http.StatusTooManyRequests, "quota_exceeded", "Daily quota exceeded.")
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": errorBody{
+		Code: "quota_exceeded", Message: "Daily quota exceeded.", Limit: limit,
+	}})
 }
 
 func abortNotFound(c *gin.Context) {
