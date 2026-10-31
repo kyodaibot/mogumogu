@@ -62,7 +62,8 @@ func run(logger *slog.Logger) error {
 	logger.Info("client ip configured", slog.Any("trusted_proxies", cfg.TrustedProxies))
 	logger.Info("assistant configured",
 		slog.String("ai_service_url", cfg.Assistant.ServiceURL),
-		slog.Int("user_daily_limit", cfg.Assistant.UserLimit),
+		slog.Int("normal_daily_limit", cfg.Assistant.NormalLimit),
+		slog.Int("pro_daily_limit", cfg.Assistant.ProLimit),
 		slog.Int("site_daily_limit", cfg.Assistant.SiteLimit))
 
 	agentTokens, err := auth.NewAgentTokens()
@@ -90,10 +91,11 @@ func run(logger *slog.Logger) error {
 			CookieSecure:     cfg.Auth.CookieSecure,
 			TrustedProxies:   cfg.TrustedProxies,
 
-			Assistant:          assistant.NewClient(cfg.Assistant.ServiceURL),
-			AgentTokens:        agentTokens,
-			AssistantUserLimit: cfg.Assistant.UserLimit,
-			AssistantSiteLimit: cfg.Assistant.SiteLimit,
+			Assistant:   assistant.NewClient(cfg.Assistant.ServiceURL),
+			AgentTokens: agentTokens,
+			AssistantLimits: httpserver.DailyLimits{
+				Normal: cfg.Assistant.NormalLimit, Pro: cfg.Assistant.ProLimit, Site: cfg.Assistant.SiteLimit,
+			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

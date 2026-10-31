@@ -26,6 +26,7 @@ type errResp struct {
 	Error struct {
 		Code    string       `json:"code"`
 		Details []fieldError `json:"details"`
+		Limit   int          `json:"limit"`
 	} `json:"error"`
 }
 

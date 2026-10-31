@@ -26,6 +26,8 @@ export const en = {
     profile: 'Profile',
     logout: 'Log out',
     loggingOut: 'Logging out…',
+    pro: 'Pro',
+    proTitle: 'Pro account',
   },
   meals: {
     breakfast: 'Breakfast',
@@ -138,6 +140,7 @@ export const en = {
     inputPlaceholder: 'e.g. Nothing spicy, I only have 15 minutes',
     send: 'Send',
     limitReached: 'You have used up today’s questions. Come back tomorrow.',
+    ownLimitReached: (limit: number) => `You have reached today’s limit of ${limit} questions. Come back tomorrow.`,
     tooFast: 'Too many messages in a short time. Wait a moment, then retry.',
     unavailable: 'The meal assistant could not answer this time. Please retry.',
     tooLong: (max: number) => `Messages can be up to ${max} characters.`,

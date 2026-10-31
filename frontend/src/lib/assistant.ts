@@ -31,6 +31,15 @@ export function presetQuestions(date: Ymd, today: Ymd): string[] {
   return [...mealQuestions(date, today), t.value.assistant.reviewWeek]
 }
 
+/**
+ * Shown when the daily quota is used up. limit is the user's own quota; it is
+ * missing when the whole site's ran out, which says nothing about theirs.
+ */
+export function quotaText(limit?: number): string {
+  const a = t.value.assistant
+  return limit ? a.ownLimitReached(limit) : a.limitReached
+}
+
 /** What the chat keeps of a message; enough to build the history. */
 export interface SentTurn {
   date: Ymd

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { setLocale } from '../i18n'
 import type { AssistantReply } from '../api'
-import { dateWords, historyOf, mealQuestions, presetQuestions, type SentTurn } from './assistant'
+import { dateWords, historyOf, mealQuestions, presetQuestions, quotaText, type SentTurn } from './assistant'
 
 describe('assistant wording', () => {
   const today = '2026-12-31'
@@ -44,6 +44,20 @@ describe('assistant wording', () => {
       'Review my meals from the last 7 days',
     ])
     expect(mealQuestions('2027-01-05', today)[0]).toBe('What should I eat for breakfast on Jan 5?')
+  })
+})
+
+describe('daily quota', () => {
+  it('names the user\'s own limit', () => {
+    setLocale('ja')
+    expect(quotaText(30)).toBe('今日の上限（30回）に達しました。また明日どうぞ。')
+    setLocale('en')
+    expect(quotaText(100)).toBe('You have reached today’s limit of 100 questions. Come back tomorrow.')
+  })
+
+  it('gives no number when the site\'s limit ran out', () => {
+    setLocale('en')
+    expect(quotaText()).toBe('You have used up today’s questions. Come back tomorrow.')
   })
 })
 

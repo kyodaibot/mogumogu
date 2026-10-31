@@ -65,6 +65,7 @@
 - `code`：机器可读，前端据此分支处理。
 - `message`：给开发者看的英文说明，**前端不直接展示**，由前端按 `code` / `reason` 显示本地化文案。
 - `details`：仅 `validation_failed` 时出现；`field` 使用请求体中的字段名，数组元素用 `allergens[2]` 形式。
+- `limit`：仅 `quota_exceeded` 时可能出现，是这位用户自己每天的额度（见 9.2）。
 - 错误响应不包含内部错误、SQL、堆栈等细节。
 
 | HTTP | code | 含义 |
@@ -79,7 +80,7 @@
 | 413 | `payload_too_large` | 请求体超过上限（一般为 64 KB，见 1.1） |
 | 422 | `validation_failed` | 字段值不符合规则，见 `details` |
 | 429 | `rate_limited` | 短时间内请求太多（限流，见 2.5），稍后可以重试；响应带 `Retry-After` 头（秒） |
-| 429 | `quota_exceeded` | 饮食助手今天的调用额度用完，次日恢复；响应带 `Retry-After` 头（秒，到次日 0 点） |
+| 429 | `quota_exceeded` | 饮食助手今天的调用额度用完，次日恢复；响应带 `Retry-After` 头（秒，到次日 0 点）；用完的是用户自己的额度时带 `limit` |
 | 500 | `internal_error` | 服务端错误 |
 | 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效）。不计入调用额度，可以重试 |
 
@@ -233,7 +234,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
   ```json
   {
-    "user": { "id": 1, "username": "taro_01", "created_at": "2026-10-23T18:30:00+09:00" },
+    "user": { "id": 1, "username": "taro_01", "tier": "normal", "created_at": "2026-10-23T18:30:00+09:00" },
     "has_profile": false,
     "csrf_token": "v1.s.1792748400.Zm9v....c2ln..."
   }
@@ -260,6 +261,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
   "user": {
     "id": 1,
     "username": "taro_01",
+    "tier": "normal",
     "created_at": "2026-10-23T18:30:00+09:00"
   },
   "has_profile": false
@@ -267,6 +269,8 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 ```
 
 前端在启动时调用此接口判断登录状态；`has_profile` 为 `false` 时引导用户先填写 Profile。
+
+`tier` 是账号等级，`normal` 或 `pro`。新注册的用户都是 `normal`，只能由管理员在服务器上修改（docs/operations.md 6.10），没有修改等级的 API。
 
 ## 5. Profile
 
@@ -497,8 +501,13 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 ### 9.2 调用额度
 
-- 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天 30 条，全站每天 300 条，可通过环境变量调整。
-- 额度在调用 AI 服务前检查并占用；用完时返回 `429 quota_exceeded`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。
+- 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天的额度按账号等级：Normal 30 条，Pro 100 条；全站每天 300 条（线上 100 条）。都可通过环境变量调整（`ASSISTANT_NORMAL_DAILY_LIMIT`、`ASSISTANT_PRO_DAILY_LIMIT`、`ASSISTANT_SITE_DAILY_LIMIT`）。
+- 等级在每条消息时从数据库读取，修改后立即生效。同一天内改变等级时，已经用掉的条数照样计算。
+- 额度在调用 AI 服务前检查并占用；用完时返回 `429 quota_exceeded`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。先检查用户自己的额度：用完的是它时，错误中带 `limit`（这位用户每天的条数）；用完的是全站额度时不带 `limit`。
+
+  ```json
+  { "error": { "code": "quota_exceeded", "message": "Daily quota exceeded.", "limit": 30 } }
+  ```
 - 另有每用户每分钟 6 条的限流（2.5），在额度之前检查；超过时返回 `429 rate_limited`，不占用额度。
 - 返回 `503 ai_unavailable` 的消息退还额度。
 

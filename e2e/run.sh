@@ -97,4 +97,5 @@ for _ in $(seq 1 120); do
 done
 ready
 
-E2E_BASE_URL="$BASE_URL" node e2e/browser.mjs "$WORK_DIR/chrome"
+# E2E_DB lets the browser test change the account tier with cmd/admin.
+E2E_BASE_URL="$BASE_URL" E2E_DB="$E2E_DB" node e2e/browser.mjs "$WORK_DIR/chrome"

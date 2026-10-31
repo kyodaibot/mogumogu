@@ -26,6 +26,8 @@ export const ja: Messages = {
     profile: 'プロフィール',
     logout: 'ログアウト',
     loggingOut: 'ログアウト中…',
+    pro: 'Pro',
+    proTitle: 'Pro アカウント',
   },
   meals: {
     breakfast: '朝食',
@@ -132,6 +134,7 @@ export const ja: Messages = {
     inputPlaceholder: '例：辛いものは避けたい、15分しかない',
     send: '送信',
     limitReached: '今日の質問回数を使い切りました。また明日どうぞ。',
+    ownLimitReached: (limit: number) => `今日の上限（${limit}回）に達しました。また明日どうぞ。`,
     tooFast: '短い時間に送信しすぎです。少し待ってから再試行してください。',
     unavailable: '食事アシスタントが回答できませんでした。もう一度お試しください。',
     tooLong: (max: number) => `メッセージは${max}文字までです。`,

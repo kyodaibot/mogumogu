@@ -16,7 +16,25 @@ type User struct {
 	ID           int64
 	Username     string
 	PasswordHash string
+	Tier         Tier
 	CreatedAt    time.Time
+}
+
+// Tier is the account tier; it decides the daily assistant quota.
+type Tier string
+
+const (
+	TierNormal Tier = "normal"
+	TierPro    Tier = "pro"
+)
+
+// ParseTier accepts the names stored in users.tier.
+func ParseTier(s string) (Tier, bool) {
+	switch t := Tier(s); t {
+	case TierNormal, TierPro:
+		return t, true
+	}
+	return "", false
 }
 
 func (User) TableName() string { return "users" }

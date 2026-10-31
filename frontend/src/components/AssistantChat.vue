@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ApiError, api, type AssistantReply, type MealRecordInput, type Recommendation } from '../api'
-import { MAX_TURNS, historyOf, mealQuestions, presetQuestions } from '../lib/assistant'
+import { MAX_TURNS, historyOf, mealQuestions, presetQuestions, quotaText } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
 import { locale, t } from '../i18n'
@@ -125,7 +125,7 @@ async function ask(turn: Turn) {
 function failureText(err: unknown): string {
   if (err instanceof ApiError) {
     const a = t.value.assistant
-    if (err.code === 'quota_exceeded') return a.limitReached
+    if (err.code === 'quota_exceeded') return quotaText(err.limit)
     if (err.code === 'rate_limited') return a.tooFast
     if (err.code === 'ai_unavailable') return a.unavailable
     if (err.code === 'validation_failed') return a.tooLong(MAX_LENGTH)

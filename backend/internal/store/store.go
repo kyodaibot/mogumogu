@@ -51,6 +51,26 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return u, notFound(err)
 }
 
+// ListUsers returns every user, oldest first. Only cmd/admin uses it.
+func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
+	var users []User
+	err := s.db.WithContext(ctx).Order("id").Find(&users).Error
+	return users, err
+}
+
+// SetUserTier changes a user's tier. Only cmd/admin uses it; there is no API
+// for it.
+func (s *Store) SetUserTier(ctx context.Context, username string, tier Tier) error {
+	res := s.db.WithContext(ctx).Model(&User{}).Where("username = ?", username).Update("tier", tier)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- revoked tokens ---
 
 func (s *Store) RevokeToken(ctx context.Context, jti string, expiresAt time.Time) error {
@@ -220,9 +240,12 @@ func (s *Store) DeleteMeal(ctx context.Context, userID, id int64) error {
 
 // --- assistant usage quota ---
 
-// ErrQuotaExceeded is returned by TakeAssistantQuota when the user's or the
-// site's daily limit is used up.
-var ErrQuotaExceeded = errors.New("assistant quota exceeded")
+// TakeAssistantQuota returns one of these when a daily limit is used up. The
+// user's own limit is checked first.
+var (
+	ErrUserQuotaExceeded = errors.New("user's assistant quota exceeded")
+	ErrSiteQuotaExceeded = errors.New("site's assistant quota exceeded")
+)
 
 // assistantQuotaLock is the advisory lock key that serialises quota checks, so
 // two concurrent messages cannot both take the last unit. Any fixed number
@@ -246,8 +269,11 @@ func (s *Store) TakeAssistantQuota(ctx context.Context, userID int64, day time.T
 		if err != nil {
 			return err
 		}
-		if used.User >= perUser || used.Site >= site {
-			return ErrQuotaExceeded
+		if used.User >= perUser {
+			return ErrUserQuotaExceeded
+		}
+		if used.Site >= site {
+			return ErrSiteQuotaExceeded
 		}
 		return tx.Exec(
 			`INSERT INTO assistant_usage (day, user_id, messages) VALUES (?, ?, 1)

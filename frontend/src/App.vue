@@ -38,6 +38,7 @@ async function logout() {
     <div class="tools">
       <span v-if="session.state.user" class="account">
         <span class="username" :title="session.state.user.username">{{ session.state.user.username }}</span>
+        <span v-if="session.state.user.tier === 'pro'" class="tier" :title="t.nav.proTitle">{{ t.nav.pro }}</span>
         <button type="button" class="link" :disabled="loggingOut" @click="logout">
           {{ loggingOut ? t.nav.loggingOut : t.nav.logout }}
         </button>
@@ -124,6 +125,18 @@ nav a.router-link-exact-active {
   border-left: 1px solid var(--line);
 }
 
+/* Shown on phones too, where the username is hidden. */
+.tier {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .username {
   color: var(--ink-soft);
   font-size: var(--fs-small);
@@ -164,7 +177,11 @@ nav a.router-link-exact-active {
   }
 
   .tools {
-    gap: 0.5rem;
+    gap: 0.375rem;
+  }
+
+  .tier {
+    padding: 0 0.3rem;
   }
 
   .account {
