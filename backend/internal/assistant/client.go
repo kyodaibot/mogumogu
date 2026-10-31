@@ -25,15 +25,17 @@ type Range struct {
 // Context is the data Go assembles for every message (project-review 3.6).
 // Profile, Events and Meals hold the same JSON objects as the public API.
 type Context struct {
-	TargetDate  string `json:"target_date"`
-	Now         string `json:"now"`
-	Timezone    string `json:"timezone"`
-	Locale      string `json:"locale"` // the reply's language: "ja" or "en"
-	Profile     any    `json:"profile"`
-	Events      any    `json:"events"`
-	EventsRange Range  `json:"events_range"`
-	Meals       any    `json:"meals"`
-	MealsRange  Range  `json:"meals_range"`
+	TargetDate string `json:"target_date"`
+	Now        string `json:"now"`
+	Timezone   string `json:"timezone"`
+	Locale     string `json:"locale"` // the reply's language: "ja" or "en"
+	// Whether the assistant may stage changes to meal records (Pro only).
+	AllowProposal bool  `json:"allow_proposal"`
+	Profile       any   `json:"profile"`
+	Events        any   `json:"events"`
+	EventsRange   Range `json:"events_range"`
+	Meals         any   `json:"meals"`
+	MealsRange    Range `json:"meals_range"`
 }
 
 type Request struct {
@@ -54,6 +56,17 @@ type Turn struct {
 	Message         string     `json:"message"`
 	Reply           string     `json:"reply"`
 	Recommendations []TurnDish `json:"recommendations"`
+	// Summary of the change proposal in the reply, if there was one.
+	Changes []TurnChange `json:"changes"`
+}
+
+// TurnChange is what the history keeps of a proposed change: the record
+// after a create or update, the record removed by a delete.
+type TurnChange struct {
+	Op       string `json:"op"`
+	Date     string `json:"date"`
+	MealType string `json:"meal_type"`
+	Content  string `json:"content"`
 }
 
 // TurnDish is what the history keeps of a recommendation.
@@ -91,6 +104,38 @@ type Reply struct {
 	AskMealType     bool             `json:"ask_meal_type"`
 	// The meal the recommendations are for; null without recommendations.
 	MealType *string `json:"meal_type"`
+	// Changes to meal records the assistant staged; Go checks and saves them
+	// as a proposal. Empty when it staged none.
+	Changes []Change `json:"changes"`
+}
+
+// Change is one staged change to the user's meal records (project-review 4).
+// Go checks it like a request to the public API before saving it.
+type Change struct {
+	Op string `json:"op"` // create, update or delete
+	// The record to update or delete.
+	MealID *int64 `json:"meal_id"`
+	// create: the new record. update: only the fields that change.
+	Meal *ChangeMeal `json:"meal"`
+}
+
+type ChangeMeal struct {
+	Date     *string `json:"date"`
+	MealType *string `json:"meal_type"`
+	Content  *string `json:"content"`
+	// Absent: unchanged (update) or none (create). null: no nutrition.
+	Nutrition OptionalNutrition `json:"nutrition"`
+}
+
+// OptionalNutrition tells an absent nutrition field from a null one.
+type OptionalNutrition struct {
+	Set   bool
+	Value *Nutrition
+}
+
+func (o *OptionalNutrition) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	return json.Unmarshal(b, &o.Value)
 }
 
 type Client struct {

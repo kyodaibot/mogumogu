@@ -68,7 +68,7 @@ class FakeModel:
         self.calls: list[dict] = []
 
     async def ainvoke(self, messages, tools, force_tool=None) -> AIMessage:
-        self.calls.append({"messages": list(messages), "force_tool": force_tool})
+        self.calls.append({"messages": list(messages), "tools": list(tools), "force_tool": force_tool})
         if len(self.calls) > len(self.script):
             raise AssertionError(f"FakeModel called {len(self.calls)} times; script has {len(self.script)} steps")
         step = self.script[len(self.calls) - 1]

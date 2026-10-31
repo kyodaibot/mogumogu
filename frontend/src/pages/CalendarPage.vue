@@ -262,7 +262,7 @@ async function remove(kind: 'event' | 'meal', id: number, label: string) {
       </div>
     </section>
 
-    <AssistantChat :date="selected" :today="today" @meal-added="load" />
+    <AssistantChat :date="selected" :today="today" @meals-changed="load" />
   </main>
 </template>
 

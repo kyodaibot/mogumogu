@@ -24,6 +24,8 @@ type fakeAI struct {
 	mu       sync.Mutex
 	requests []assistant.Request
 	fail     bool
+	// Staged changes returned with the reply.
+	changes []assistant.Change
 }
 
 func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Reply, error) {
@@ -41,6 +43,7 @@ func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Repl
 			Per100g: assistant.Nutrition{Calories: 163, ProteinG: 9, FatG: 4, CarbsG: 21},
 		}}},
 		MealType: &lunch,
+		Changes:  f.changes,
 	}, nil
 }
 
@@ -356,8 +359,8 @@ func TestIntegrationAssistantHistory(t *testing.T) {
 	want := []assistant.Turn{
 		{Date: "2026-10-31", Message: "明日の昼食は？", Reply: "3つ提案します。", Recommendations: []assistant.TurnDish{
 			{Name: "親子丼", Description: "親子丼の説明"}, {Name: "焼き鮭定食", Description: "焼き鮭定食の説明"}, {Name: "カレー", Description: "カレーの説明"},
-		}},
-		{Date: "2026-11-01", Message: "あさっては？", Reply: "何食ですか？", Recommendations: []assistant.TurnDish{}},
+		}, Changes: []assistant.TurnChange{}},
+		{Date: "2026-11-01", Message: "あさっては？", Reply: "何食ですか？", Recommendations: []assistant.TurnDish{}, Changes: []assistant.TurnChange{}},
 	}
 	if fmtJSON(t, h) != fmtJSON(t, want) {
 		t.Fatalf("history:\n got %s\nwant %s", fmtJSON(t, h), fmtJSON(t, want))

@@ -6,7 +6,7 @@ agent → route → tools → agent …
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
 from .schemas import ReplyRequest, SubmitReply
-from .tools import ALL_TOOLS, QUERY_TOOLS, SUBMIT_REPLY, DataSource, QueryBudget, run_query
+from .tools import QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY, DataSource, QueryBudget, Staging, run_query, tools_for
 
 # Query tools are allowed while fewer than this many model calls were made.
 MAX_AGENT_STEPS = 4
@@ -26,6 +26,7 @@ MAX_AGENT_STEPS = 4
 RECURSION_LIMIT = 20
 
 _QUERY_NAMES = {t.name for t in QUERY_TOOLS}
+_STAGING_NAMES = {t.name for t in STAGING_TOOLS}
 
 
 class State(TypedDict):
@@ -45,6 +46,8 @@ class Outcome:
     retried: bool
     input_tokens: int
     output_tokens: int
+    # Changes staged for a proposal (tools.Staging); empty without any.
+    changes: list[dict] = field(default_factory=list)
 
 
 def check_reply(args: dict, allergens: list[str]) -> SubmitReply | str:
@@ -72,35 +75,57 @@ def _answer_pending(last: AIMessage, text: str) -> list[AnyMessage]:
     return [ToolMessage(text, tool_call_id=call["id"]) for call in last.tool_calls]
 
 
-def build_graph(model: ChatModel, source: DataSource, allergens: list[str]):
+def build_graph(model: ChatModel, source: DataSource, allergens: list[str], staging: Staging | None = None):
+    """staging is None when Go does not allow proposals; the staging tools
+    are then not offered."""
     budget = QueryBudget()
+    tools_offered = tools_for(staging is not None)
+    runnable = _QUERY_NAMES | (_STAGING_NAMES if staging else set())
 
     async def call_model(messages, force_tool=None) -> AIMessage:
-        return await model.ainvoke([SystemMessage(SYSTEM_PROMPT), *messages], ALL_TOOLS, force_tool)
+        return await model.ainvoke([SystemMessage(SYSTEM_PROMPT), *messages], tools_offered, force_tool)
 
     async def agent(state: State):
         resp = await call_model(state["messages"])
         return {"messages": [resp], "steps": state["steps"] + 1}
 
     def route(state: State) -> str:
-        names = [call["name"] for call in state["messages"][-1].tool_calls]
+        names = {call["name"] for call in state["messages"][-1].tool_calls}
+        can_run = state["steps"] < MAX_AGENT_STEPS
+        # Changes staged next to submit_reply are staged first, so they are
+        # not lost; the model submits again after seeing the results.
+        if can_run and names & _STAGING_NAMES and names - {SUBMIT_REPLY.name} <= runnable:
+            return "tools"
         if SUBMIT_REPLY.name in names:
             return "validate"
-        if names and set(names) <= _QUERY_NAMES and state["steps"] < MAX_AGENT_STEPS:
+        if names and names <= runnable and can_run:
             return "tools"
         return "force_finish"
 
     async def tools(state: State):
         calls = state["messages"][-1].tool_calls
-        results = await asyncio.gather(*(run_query(source, c["name"], c["args"], budget) for c in calls))
-        return {"messages": [ToolMessage(r, tool_call_id=c["id"]) for c, r in zip(calls, results)]}
+        seen = staging.seen_meals if staging else None
+        queries = [c for c in calls if c["name"] in _QUERY_NAMES]
+        answers = dict(zip(
+            (c["id"] for c in queries),
+            await asyncio.gather(*(run_query(source, c["name"], c["args"], budget, seen) for c in queries)),
+        ))
+        # After the queries, which may show the ids of the records to change.
+        for c in calls:
+            if c["name"] in _STAGING_NAMES:
+                answers[c["id"]] = staging.stage(c["name"], c["args"])
+            elif c["name"] == SUBMIT_REPLY.name:
+                answers[c["id"]] = "Not submitted yet: read these results, then call submit_reply again."
+        return {"messages": [ToolMessage(answers[c["id"]], tool_call_id=c["id"]) for c in calls]}
 
     async def force_finish(state: State):
         new: list[AnyMessage] = []
         last = state["messages"][-1]
         # Coming straight from agent: its queries (if any) are not run.
         if isinstance(last, AIMessage):
-            new = _answer_pending(last, "No more queries. Call submit_reply with what you already have.")
+            new = _answer_pending(
+                last, "No more tool calls; these were not run. Call submit_reply with what you already have."
+            )
         resp = await call_model([*state["messages"], *new], force_tool=SUBMIT_REPLY.name)
         return {"messages": [*new, resp], "steps": state["steps"] + 1}
 
@@ -143,7 +168,9 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str]):
 async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> Outcome:
     """Answers one message. Model and data-source errors propagate to the caller."""
     profile = req.context.profile
-    graph = build_graph(model, source, (profile.allergens or []) if profile else [])
+    allergens = (profile.allergens or []) if profile else []
+    staging = Staging((m.id for m in req.context.meals), allergens) if req.context.allow_proposal else None
+    graph = build_graph(model, source, allergens, staging)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "steps": 0,
@@ -164,4 +191,5 @@ async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> 
         retried=final["retried"],
         input_tokens=sum(u["input_tokens"] for u in usage),
         output_tokens=sum(u["output_tokens"] for u in usage),
+        changes=staging.changes if staging and final["result"] else [],
     )

@@ -1,4 +1,4 @@
-# Container logs (plans/observability.md). Docker's awslogs driver on the
+# Container logs (plans/archive/observability.md). Docker's awslogs driver on the
 # instance writes every container's output here, one stream per container;
 # the instance role may only write to this group (iam.tf).
 

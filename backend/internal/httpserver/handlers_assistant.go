@@ -50,6 +50,15 @@ type turnInput struct {
 	Message         *string     `json:"message"`
 	Reply           *string     `json:"reply"`
 	Recommendations []dishInput `json:"recommendations"`
+	// The change proposal of that reply, as a summary. Optional.
+	Changes []turnChangeInput `json:"changes"`
+}
+
+type turnChangeInput struct {
+	Op       *string `json:"op"`
+	Date     *string `json:"date"`
+	MealType *string `json:"meal_type"`
+	Content  *string `json:"content"`
 }
 
 type dishInput struct {
@@ -89,9 +98,39 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 				Description: v.text(prefix+"description", r.Description, 1, 200),
 			})
 		}
+		if len(t.Changes) > maxProposalChanges {
+			v.add(field("changes"), "too_long")
+		}
+		turn.Changes = []assistant.TurnChange{}
+		for j, ch := range t.Changes {
+			prefix := fmt.Sprintf("%s[%d].", field("changes"), j)
+			tc := assistant.TurnChange{
+				Op:       v.oneOf(prefix+"op", ch.Op, store.OpCreate, store.OpUpdate, store.OpDelete),
+				MealType: v.oneOf(prefix+"meal_type", ch.MealType, "breakfast", "lunch", "dinner", "snack"),
+				Content:  v.text(prefix+"content", ch.Content, 1, 200),
+			}
+			if ch.Date == nil {
+				v.add(prefix+"date", "required")
+			} else if d, err := tz.ParseDate(*ch.Date); err != nil {
+				v.add(prefix+"date", "invalid_format")
+			} else {
+				tc.Date = d.String()
+			}
+			turn.Changes = append(turn.Changes, tc)
+		}
 		out = append(out, turn)
 	}
 	return out
+}
+
+// assistantReplyJSON is the answer to a message (docs/api.md 9.1).
+type assistantReplyJSON struct {
+	Reply           string                     `json:"reply"`
+	Recommendations []assistant.Recommendation `json:"recommendations"`
+	AskMealType     bool                       `json:"ask_meal_type"`
+	MealType        *string                    `json:"meal_type"`
+	// The changes to meal records the assistant proposes; null without any.
+	Proposal *proposalJSON `json:"proposal"`
 }
 
 // postAssistantMessage answers one message to the meal assistant
@@ -161,7 +200,11 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		return
 	}
 
-	reply, err := a.askAssistant(ctx, sess.UserID, target, message, locale, history, now)
+	reply, err := a.askAssistant(ctx, user, target, message, locale, history, now)
+	var proposal *proposalJSON
+	if err == nil {
+		proposal, err = a.saveProposal(ctx, user, reply.Changes)
+	}
 	if err != nil {
 		// The message was not answered, so it does not count. The request may
 		// have been cancelled; the refund must still happen.
@@ -172,12 +215,16 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		abortError(c, http.StatusServiceUnavailable, "ai_unavailable", "The meal assistant is unavailable. Try again later.")
 		return
 	}
-	c.JSON(http.StatusOK, reply)
+	c.JSON(http.StatusOK, assistantReplyJSON{
+		Reply: reply.Reply, Recommendations: reply.Recommendations,
+		AskMealType: reply.AskMealType, MealType: reply.MealType, Proposal: proposal,
+	})
 }
 
 // askAssistant assembles the initial context (project-review 3.6) and calls
 // the AI service.
-func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, error) {
+func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, error) {
+	userID := user.ID
 	var profile any
 	p, err := a.store.GetProfile(ctx, userID)
 	switch {
@@ -218,15 +265,17 @@ func (a *api) askAssistant(ctx context.Context, userID int64, target tz.Date, me
 		History: history,
 		Token:   a.agentTokens.Issue(userID),
 		Context: assistant.Context{
-			TargetDate:  target.String(),
-			Now:         tz.FormatInstant(now),
-			Timezone:    tz.Tokyo.String(),
-			Locale:      locale,
-			Profile:     profile,
-			Events:      eventItems,
-			EventsRange: assistant.Range{From: evFrom.String(), To: evTo.String()},
-			Meals:       mealItems,
-			MealsRange:  assistant.Range{From: mealFrom.String(), To: mealTo.String()},
+			TargetDate: target.String(),
+			Now:        tz.FormatInstant(now),
+			Timezone:   tz.Tokyo.String(),
+			Locale:     locale,
+			// Checked again when the reply comes back and when the proposal runs.
+			AllowProposal: user.Tier == store.TierPro,
+			Profile:       profile,
+			Events:        eventItems,
+			EventsRange:   assistant.Range{From: evFrom.String(), To: evTo.String()},
+			Meals:         mealItems,
+			MealsRange:    assistant.Range{From: mealFrom.String(), To: mealTo.String()},
 		},
 	})
 }
