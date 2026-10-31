@@ -34,7 +34,7 @@
 - 退出时清除 Cookie，并在 PostgreSQL 中记录撤销，使旧令牌失效。令牌过期后重新登录。
 - 实现基本登录限流、CSRF 防护和适当的 Cookie 配置；生产环境使用 HTTPS。
 - 用户数据按用户隔离。所有数据访问依据服务端验证后的身份授权，不信任客户端提交的 user_id。
-- 账号等级（Normal、Pro，见 GLOSSARY.md 和 plans/account-tiers.md）：新用户都是 Normal。等级只能由管理员在服务器上用 `cmd/admin` 修改，没有对应的 API 或管理页面。目前 Pro 只是每天的调用额度更多（3.6）；Pro 用户在导航栏显示「Pro」标记。等级只在 Go 中判断，不传给 AI 服务。
+- 账号等级（Normal、Pro，见 GLOSSARY.md 和 plans/account-tiers.md）：新用户都是 Normal。等级只能由管理员在服务器上用 `cmd/admin` 修改，没有对应的 API 或管理页面。目前 Pro 只是每天的调用额度更多（3.6）；导航栏的用户名旁显示账号等级（「Normal」或「Pro」）。等级只在 Go 中判断，不传给 AI 服务。
 
 ### 3.2 Profile
 

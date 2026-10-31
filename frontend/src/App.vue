@@ -34,11 +34,13 @@ async function logout() {
     <nav v-if="session.state.user">
       <RouterLink v-if="session.state.hasProfile" to="/">{{ t.nav.calendar }}</RouterLink>
       <RouterLink to="/profile">{{ t.nav.profile }}</RouterLink>
+      <!-- On phones the tier sits here, at the end of the second row; there is no room beside the logout button. -->
+      <span class="tier on-phone" :class="session.state.user.tier" :title="t.nav.tierTitle">{{ t.nav.tiers[session.state.user.tier] }}</span>
     </nav>
     <div class="tools">
       <span v-if="session.state.user" class="account">
         <span class="username" :title="session.state.user.username">{{ session.state.user.username }}</span>
-        <span v-if="session.state.user.tier === 'pro'" class="tier" :title="t.nav.proTitle">{{ t.nav.pro }}</span>
+        <span class="tier on-desktop" :class="session.state.user.tier" :title="t.nav.tierTitle">{{ t.nav.tiers[session.state.user.tier] }}</span>
         <button type="button" class="link" :disabled="loggingOut" @click="logout">
           {{ loggingOut ? t.nav.loggingOut : t.nav.logout }}
         </button>
@@ -125,16 +127,25 @@ nav a.router-link-exact-active {
   border-left: 1px solid var(--line);
 }
 
-/* Shown on phones too, where the username is hidden. */
+/* The account tier, beside the username; on phones at the end of the nav row. */
 .tier {
   flex: none;
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
-  background: var(--primary-soft);
-  color: var(--primary);
+  background: var(--surface);
+  color: var(--ink-soft);
   font-size: var(--fs-small);
   font-weight: 600;
   line-height: 1.4;
+}
+
+.tier.pro {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.tier.on-phone {
+  display: none;
 }
 
 .username {
@@ -168,7 +179,7 @@ nav a.router-link-exact-active {
 
   nav {
     order: 1;
-    width: 100%;
+    width: calc(100% + 0.5rem);
     margin-left: -0.5rem;
   }
 
@@ -177,11 +188,16 @@ nav a.router-link-exact-active {
   }
 
   .tools {
-    gap: 0.375rem;
+    gap: 0.5rem;
   }
 
-  .tier {
-    padding: 0 0.3rem;
+  .tier.on-desktop {
+    display: none;
+  }
+
+  .tier.on-phone {
+    display: inline;
+    margin-left: auto;
   }
 
   .account {

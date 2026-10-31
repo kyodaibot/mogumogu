@@ -24,7 +24,7 @@
   - 每分钟 6 条的限流对两个等级相同。
 - **界面**：
   - `GET /api/auth/me` 的 `user` 中新增 `tier`；
-  - 导航栏用户名旁边，只有 Pro 用户显示「Pro」标记；
+  - 导航栏用户名旁边显示账号等级：「Normal」或「Pro」（原来只给 Pro 显示，2026-10-31 改为两种都显示）；
   - 额度用完的提示中写出当天的上限，例如「今日の上限（30回）に達しました」。上限随 `quota_exceeded` 错误返回（`error.limit`），前端不自己保存这个数字。
   - 只有用户自己的上限用完时才返回 `limit`。全站上限用完时不返回，前端显示现有的通用提示，避免出现「你的 30 次用完了」这种不准确的说法。
   - 不做「今天还剩几次」的显示。
@@ -56,12 +56,12 @@
 ## 里程碑 2：前端与脚本
 
 - `api/index.ts`：`User.tier`。
-- `App.vue`：Pro 用户在用户名旁显示「Pro」标记，375px 宽度下也不被挤坏。
+- `App.vue`：用户名旁显示「Normal」或「Pro」，375px 宽度下也不被挤坏。
 - `AssistantChat.vue` 和 i18n（ja、en）：额度用完的提示带上上限。
 - `scripts/seed-local.mjs` 或 Makefile：完成后把 `busy` 设为 Pro。
 - 测试：
   - Vitest：额度用完的文案（有 `limit` 和没有 `limit` 两种）；
-  - E2E：注册的新用户没有「Pro」标记；用 `admin` 把测试用户改为 Pro，刷新后显示「Pro」标记。
+  - E2E：注册的新用户显示「Normal」；用 `admin` 把测试用户改为 Pro，刷新后显示「Pro」。
 
 ## 里程碑 3：文档
 
@@ -77,7 +77,7 @@
 
 ## 实施记录（2026-10-31）
 
-- 375px 的日语界面中，「Pro」标记会把语言切换挤到第三行。手机宽度下缩小了工具栏的间距和标记的内边距，现在和 Normal 一样是两行。
+- 375px 的日语界面中，等级标记放在用户名旁会把语言切换挤到第三行（「Normal」比「Pro」宽，缩小间距也放不下）。所以手机宽度下，标记放在第二行（导航链接那一行）的右端；电脑上仍在用户名旁边。
 - 线上通过 `docker compose run --rm migrate /admin …` 执行，输出（包含用户名）也会写入 CloudWatch Logs。
 - 本地的 `.env` 如果还有 `ASSISTANT_USER_DAILY_LIMIT`，它已经不再被读取，可以删除；需要时改用 `ASSISTANT_NORMAL_DAILY_LIMIT` 和 `ASSISTANT_PRO_DAILY_LIMIT`。
 

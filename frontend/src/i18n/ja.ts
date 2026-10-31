@@ -26,8 +26,8 @@ export const ja: Messages = {
     profile: 'プロフィール',
     logout: 'ログアウト',
     loggingOut: 'ログアウト中…',
-    pro: 'Pro',
-    proTitle: 'Pro アカウント',
+    tiers: { normal: 'Normal', pro: 'Pro' },
+    tierTitle: 'アカウントの等級',
   },
   meals: {
     breakfast: '朝食',
