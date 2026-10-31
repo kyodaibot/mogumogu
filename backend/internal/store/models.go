@@ -5,7 +5,9 @@ package store
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -83,6 +85,81 @@ type MealRecord struct {
 
 func (MealRecord) TableName() string { return "meal_records" }
 
+// Proposal is a change proposal (GLOSSARY: 变更提案): changes to the user's
+// meal records the assistant staged. They run once, when the user confirms.
+type Proposal struct {
+	ID         int64
+	UserID     int64
+	Changes    JSON[[]ProposalChange]
+	CreatedAt  time.Time
+	ExecutedAt *time.Time
+	// One result per change; empty until the proposal runs.
+	Results JSON[[]ChangeResult]
+}
+
+func (Proposal) TableName() string { return "proposals" }
+
+// Kinds of change in a proposal.
+const (
+	OpCreate = "create"
+	OpUpdate = "update"
+	OpDelete = "delete"
+)
+
+// ProposalChange is one change. Before is the record when the change was
+// proposed (update, delete); its UpdatedAt is the optimistic lock. After is
+// the record to write (create, update).
+type ProposalChange struct {
+	Op     string      `json:"op"`
+	Before *MealRecord `json:"before,omitempty"`
+	After  *MealRecord `json:"after,omitempty"`
+}
+
+// What happened to one change when its proposal ran.
+const (
+	ResultDone    = "done"
+	ResultFailed  = "failed"
+	ResultSkipped = "skipped" // the user unchecked it
+)
+
+// Why a change failed.
+const (
+	ReasonChanged  = "changed" // the record was edited after the proposal
+	ReasonNotFound = "not_found"
+)
+
+type ChangeResult struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	// The record created or changed.
+	MealID int64 `json:"meal_id,omitempty"`
+}
+
+// JSON maps a jsonb column to a Go value.
+type JSON[T any] struct {
+	V T
+}
+
+func (JSON[T]) GormDataType() string { return "jsonb" }
+
+func (j *JSON[T]) Scan(src any) error {
+	switch s := src.(type) {
+	case nil:
+		*j = JSON[T]{}
+		return nil
+	case []byte:
+		return json.Unmarshal(s, &j.V)
+	case string:
+		return json.Unmarshal([]byte(s), &j.V)
+	}
+	return fmt.Errorf("jsonb: unsupported type %T", src)
+}
+
+func (j JSON[T]) Value() (driver.Value, error) {
+	b, err := json.Marshal(j.V)
+	return string(b), err
+}
+
 type RevokedToken struct {
 	JTI       string `gorm:"primaryKey;column:jti"`
 	ExpiresAt time.Time
@@ -141,4 +218,11 @@ func (a NullStringArray) Value() (driver.Value, error) {
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrUsernameTaken = errors.New("username taken")
+)
+
+// ExecuteProposal returns these when the proposal cannot run.
+var (
+	ErrProposalExecuted = errors.New("proposal already executed")
+	ErrProposalExpired  = errors.New("proposal expired")
+	ErrNoSuchChange     = errors.New("no such change in the proposal")
 )

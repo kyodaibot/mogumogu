@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from .agent import run_agent
 from .demo import demo_model
 from .model import ChatModel
-from .schemas import ReplyRequest, SubmitReply
+from .schemas import Reply, ReplyRequest
 from .tools import GoClient
 
 log = logging.getLogger("mogumogu_ai")
@@ -62,7 +62,7 @@ async def healthz():
     return {"status": "ok"}
 
 
-@app.post("/internal/reply", response_model=SubmitReply)
+@app.post("/internal/reply", response_model=Reply)
 async def reply(req: ReplyRequest, request: Request):
     started = time.monotonic()
     source = GoClient(request.app.state.http, req.token)
@@ -82,9 +82,9 @@ async def reply(req: ReplyRequest, request: Request):
              input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens)
         return JSONResponse({"error": outcome.error}, status_code=503)
 
-    _log("ok", started, steps=outcome.steps, retried=outcome.retried,
+    _log("ok", started, steps=outcome.steps, retried=outcome.retried, changes=len(outcome.changes),
          input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens)
-    return outcome.result
+    return Reply.model_construct(**dict(outcome.result), changes=outcome.changes)
 
 
 def _log(result: str, started: float, **fields) -> None:

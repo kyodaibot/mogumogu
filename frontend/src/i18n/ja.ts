@@ -151,6 +151,22 @@ export const ja: Messages = {
     turnLimit: (max: number) => `この会話は${max}回に達しました。続けるには新しい会話を始めてください。`,
     addToLog: '食事の記録に追加',
     added: '追加しました ✓',
+    proposal: {
+      title: '食事の記録の変更',
+      hint: '「実行」するまで保存されません。不要なものはチェックを外してください。',
+      ops: { create: '追加', update: '変更', delete: '削除' },
+      fields: { date: '日付', meal_type: '食事', content: '内容' },
+      run: '実行',
+      running: '実行中…',
+      expires: (time: string) => `${time} まで実行できます`,
+      done: '完了',
+      skipped: 'スキップ',
+      changedSince: '変更されませんでした：提案のあとで記録が編集されています。',
+      notFound: '変更されませんでした：記録がもうありません。',
+      executed: 'この変更はすでに実行されています。',
+      expired: 'この変更は期限切れです。もう一度お願いしてください。',
+      proRequired: '変更の実行には Pro アカウントが必要です。',
+    },
   },
   errors: {
     codes: {

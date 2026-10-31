@@ -9,6 +9,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+MealType = Literal["breakfast", "lunch", "dinner", "snack"]
+
+
 class Profile(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
@@ -27,8 +30,10 @@ class Event(BaseModel):
 
 
 class Meal(BaseModel):
+    # The record's id; update_meal and delete_meal name a record by it.
+    id: int
     date: date
-    meal_type: Literal["breakfast", "lunch", "dinner", "snack"]
+    meal_type: MealType
     content: str
     calories: float | None = None
     protein_g: float | None = None
@@ -51,6 +56,8 @@ class Context(BaseModel):
     timezone: str
     # The interface language, which the reply is written in.
     locale: Literal["ja", "en"] = "en"
+    # Whether the staging tools are offered (Pro only).
+    allow_proposal: bool = False
     profile: Profile | None
     events: list[Event]
     events_range: DateRange
@@ -65,6 +72,15 @@ class HistoryDish(BaseModel):
     description: str = Field(min_length=1, max_length=200)
 
 
+class HistoryChange(BaseModel):
+    """What the conversation history keeps of a proposed change."""
+
+    op: Literal["create", "update", "delete"]
+    date: date
+    meal_type: MealType
+    content: str = Field(min_length=1, max_length=200)
+
+
 class Turn(BaseModel):
     """One earlier turn of the conversation (project-review 3.6). The browser
     sends it back and Go only checks its shape, so it is untrusted."""
@@ -73,6 +89,8 @@ class Turn(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     reply: str = Field(min_length=1, max_length=1000)
     recommendations: list[HistoryDish] = Field(default_factory=list)
+    # The change proposal of that reply, if it had one.
+    changes: list[HistoryChange] = Field(default_factory=list, max_length=10)
 
     @field_validator("recommendations")
     @classmethod
@@ -123,6 +141,13 @@ class ServingNutrition(BaseModel):
         _check_energy(self)
         return self
 
+    def rounded(self) -> "ServingNutrition":
+        """kcal to 10, grams to 1."""
+        return ServingNutrition.model_construct(
+            calories=_round(self.calories, 10), protein_g=_round(self.protein_g),
+            fat_g=_round(self.fat_g), carbs_g=_round(self.carbs_g),
+        )
+
 
 class Per100gNutrition(BaseModel):
     """Per 100 g of the food (a combination: of the whole serving mixed)."""
@@ -159,12 +184,9 @@ class Estimate(BaseModel):
 
     def rounded(self) -> "Estimate":
         """Serving: kcal to 10, grams to 1. Per 100 g: kcal and grams to 1."""
-        s, p = self.serving, self.per_100g
+        p = self.per_100g
         return Estimate.model_construct(
-            serving=ServingNutrition.model_construct(
-                calories=_round(s.calories, 10), protein_g=_round(s.protein_g),
-                fat_g=_round(s.fat_g), carbs_g=_round(s.carbs_g),
-            ),
+            serving=self.serving.rounded(),
             per_100g=Per100gNutrition.model_construct(
                 calories=_round(p.calories), protein_g=_round(p.protein_g),
                 fat_g=_round(p.fat_g), carbs_g=_round(p.carbs_g),
@@ -200,7 +222,7 @@ class SubmitReply(BaseModel):
         default=False,
         description="True when the target date is not today and the user did not say which meal; then no recommendations",
     )
-    meal_type: Literal["breakfast", "lunch", "dinner", "snack"] | None = Field(
+    meal_type: MealType | None = Field(
         default=None,
         description="The meal all three recommendations are for; required with recommendations, otherwise null",
     )
@@ -234,3 +256,10 @@ class SubmitReply(BaseModel):
         """The reply as sent to Go, with every estimate rounded."""
         recs = [r.model_copy(update={"estimate": r.estimate.rounded()}) for r in self.recommendations]
         return self.model_copy(update={"recommendations": recs})
+
+
+class Reply(SubmitReply):
+    """Body of the response to Go: the reply and the changes staged with it
+    (tools.Staging), which Go checks and saves as a proposal."""
+
+    changes: list[dict] = Field(default_factory=list)

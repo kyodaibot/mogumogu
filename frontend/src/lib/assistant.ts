@@ -5,6 +5,7 @@
 import type { AssistantReply, HistoryTurn } from '../api'
 import { t } from '../i18n'
 import { addDays, formatShortDate, type Ymd } from './date'
+import { summaryOf } from './proposals'
 
 /** A conversation has at most this many answered messages (project-review 3.6). */
 export const MAX_TURNS = 10
@@ -62,5 +63,6 @@ export function historyOf(turns: SentTurn[]): HistoryTurn[] {
       message: turn.text,
       reply: turn.reply!.reply,
       recommendations: turn.reply!.recommendations.map(({ name, description }) => ({ name, description })),
+      changes: turn.reply!.proposal ? summaryOf(turn.reply!.proposal) : [],
     }))
 }

@@ -345,6 +345,23 @@ async function main() {
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
   check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
+
+  // Pro: the assistant proposes a record; nothing is saved until it runs.
+  const ramenOnCalendar = `[...document.querySelectorAll('.meal-group')].some(e => e.innerText.includes('ラーメン'))`
+  await fill('#assistant-input', '昼食にラーメンを食べた')
+  await click('.composer button[type=submit]')
+  await waitFor(`!!document.querySelector('.panel .proposal')`, 'proposal card')
+  const card = await textOf('.panel .proposal')
+  check('a Pro user gets a card of changes to run',
+    card.includes('追加') && card.includes('ラーメン') && card.includes('約 500 kcal（目安）') && card.includes('実行'), card.replace(/\n/g, ' | '))
+  check('nothing is saved before the card runs', !(await evaluate(ramenOnCalendar)))
+  await click('.panel .proposal .actions button')
+  await waitFor(`!!document.querySelector('.panel .proposal .change.done')`, 'proposal run')
+  check('after running, each change shows its result and the card locks',
+    (await textOf('.panel .proposal .result')) === '✓ 完了' && !(await evaluate(`!!${q('.panel .proposal .actions')}`)))
+  await waitFor(ramenOnCalendar, 'calendar shows the recorded meal')
+  const run = requests.find((r) => r.url.endsWith('/execute'))
+  check('running sends the checked changes; the calendar shows the new record', JSON.parse(run.body).accepted.join() === '0', run.body)
   await click('.panel .close')
 
   // Delete the event (accept the confirm dialog).

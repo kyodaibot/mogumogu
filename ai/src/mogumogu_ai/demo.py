@@ -7,15 +7,21 @@ are recognised in Japanese and English; the answer is in context.locale, as
 the real prompt asks. Any other message after a turn with recommendations is
 taken as a follow-up: three new ones for the same meal, naming the first of
 the earlier ones, so a test can see the history arrived.
+
+"I ate" stages a record of ramen for the target date, and "delete" stages
+deleting the first record of that date, when the context allows proposals;
+otherwise the reply says it is a Pro feature.
 """
 
 import json
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from .model import reply, tool_call
 
 _ASK = ("何を食べ", "what should i eat")
+_ATE = ("食べた", "i ate", "i had")
+_DELETE = ("消して", "削除", "delete")
 _MEALS = {
     "朝食": "breakfast", "昼食": "lunch", "夕食": "dinner",
     "breakfast": "breakfast", "lunch": "lunch", "dinner": "dinner",
@@ -37,6 +43,10 @@ _TEXT = {
         "ask_meal": "（テスト回答）朝食・昼食・夕食のどれですか？",
         "off_topic": "（テスト回答）食事に関する質問にだけ答えられます。",
         "follow_up": "（テスト回答）前回の「{}」などを踏まえて、3つの案です：",
+        "staged": "（テスト回答）変更を用意しました。カードで確認してください。",
+        "pro_only": "（テスト回答）チャットでの記録は Pro の機能です。カレンダーから追加できます。",
+        "no_record": "（テスト回答）その日の記録はありません。",
+        "ramen": "ラーメン",
         "recommendations": [
             {"name": "照り焼きチキン丼", "description": "鶏もも肉とご飯、ブロッコリー", "reason": "（テストデータ）たんぱく質と炭水化物が十分"},
             {"name": "鮭おにぎりセット", "description": "おにぎり2個と味噌汁", "reason": "（テストデータ）コンビニで買えて時間を節約"},
@@ -48,6 +58,10 @@ _TEXT = {
         "ask_meal": "(Test reply) Breakfast, lunch or dinner?",
         "off_topic": "(Test reply) I can only answer questions about food.",
         "follow_up": "(Test reply) Building on \"{}\" and the others, here are three ideas:",
+        "staged": "(Test reply) The changes are ready. Check them on the card.",
+        "pro_only": "(Test reply) Recording meals in the chat is a Pro feature. You can add them on the calendar.",
+        "no_record": "(Test reply) There is no record on that day.",
+        "ramen": "Ramen",
         "recommendations": [
             {"name": "Teriyaki chicken bowl", "description": "Chicken thigh with rice and broccoli", "reason": "(Test data) Plenty of protein and carbs"},
             {"name": "Salmon onigiri set", "description": "Two rice balls and miso soup", "reason": "(Test data) Quick to buy at a convenience store"},
@@ -67,6 +81,29 @@ def _locale(first: str) -> str:
     return _block(first, "context").get("locale", "en")
 
 
+def _stage(context: dict, message: str, t: dict, staged: bool):
+    """The tool call for a message that asks to record or delete, or None."""
+    # 何を食べたらいい also contains 食べた.
+    ate = any(w in message for w in _ATE) and not any(a in message for a in _ASK)
+    delete = any(w in message for w in _DELETE)
+    if not (ate or delete):
+        return None
+    if not context.get("allow_proposal"):
+        return tool_call("submit_reply", reply=t["pro_only"])
+    if staged:
+        return tool_call("submit_reply", reply=t["staged"])
+    day = context["target_date"]
+    if ate:
+        return tool_call(
+            "create_meal", date=day, meal_type=_meal(message) or "lunch", content=t["ramen"],
+            nutrition={"calories": 500, "protein_g": 20, "fat_g": 15, "carbs_g": 70},
+        )
+    meal = next((m for m in context["meals"] if m["date"] == day), None)
+    if meal is None:
+        return tool_call("submit_reply", reply=t["no_record"])
+    return tool_call("delete_meal", meal_id=meal["id"])
+
+
 def _meal(text: str) -> str | None:
     lowered = text.lower()
     return next((v for k, v in _MEALS.items() if k in lowered), None)
@@ -77,6 +114,9 @@ class DemoModel:
         first = next(m.content for m in messages if isinstance(m, HumanMessage))
         lowered = first.split("<message>")[-1].lower()
         t = _TEXT[_locale(first)]
+        staging = _stage(_block(first, "context"), lowered, t, any(isinstance(m, ToolMessage) for m in messages))
+        if staging:
+            return reply(staging)
         meal_type = _meal(lowered)
         recs = [{**r, "estimate": e} for r, e in zip(t["recommendations"], _ESTIMATES)]
         earlier = [turn for turn in _block(first, "history") or [] if turn["recommendations"]]

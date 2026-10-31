@@ -161,6 +161,23 @@ export const en = {
     turnLimit: (max: number) => `This chat has reached ${max} messages. Start a new chat to keep going.`,
     addToLog: 'Add to meal log',
     added: 'Added ✓',
+    /** The card of changes to the meal log the assistant proposes (Pro). */
+    proposal: {
+      title: 'Changes to your meal log',
+      hint: 'Nothing is saved until you run them. Uncheck any you don’t want.',
+      ops: { create: 'Add', update: 'Change', delete: 'Delete' },
+      fields: { date: 'Date', meal_type: 'Meal', content: 'Food' },
+      run: 'Run',
+      running: 'Running…',
+      expires: (time: string) => `Run by ${time}`,
+      done: 'Done',
+      skipped: 'Skipped',
+      changedSince: 'Not changed: the record was edited after this was proposed.',
+      notFound: 'Not changed: the record no longer exists.',
+      executed: 'These changes have already been run.',
+      expired: 'These changes have expired. Ask again for new ones.',
+      proRequired: 'Running changes needs a Pro account.',
+    },
   },
   errors: {
     codes: {

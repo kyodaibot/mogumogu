@@ -74,9 +74,12 @@
 | 401 | `unauthenticated` | 未登录、令牌无效、过期或已撤销 |
 | 401 | `invalid_credentials` | 登录时用户名或密码错误（不区分是哪一个错） |
 | 403 | `csrf_failed` | CSRF 校验失败，见 2.4 |
+| 403 | `pro_required` | 需要 Pro 账号（执行变更提案，见 9.4） |
 | 404 | `not_found` | 资源不存在，**或属于其他用户**（两者不区分） |
 | 404 | `profile_not_found` | 当前用户尚未创建 Profile |
 | 409 | `username_taken` | 注册时用户名已被使用 |
+| 409 | `proposal_executed` | 变更提案已经执行过（9.4） |
+| 410 | `proposal_expired` | 变更提案已过期（生成后 2 小时，9.4） |
 | 413 | `payload_too_large` | 请求体超过上限（一般为 64 KB，见 1.1） |
 | 422 | `validation_failed` | 字段值不符合规则，见 `details` |
 | 429 | `rate_limited` | 短时间内请求太多（限流，见 2.5），稍后可以重试；响应带 `Retry-After` 头（秒） |
@@ -204,6 +207,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 | PUT | `/api/meal-records/{id}` | 是 | 替换一条饮食记录 |
 | DELETE | `/api/meal-records/{id}` | 是 | 删除一条饮食记录 |
 | POST | `/api/assistant/messages` | 是 | 向饮食助手发送一条消息 |
+| POST | `/api/assistant/proposals/{id}/execute` | 是 | 执行变更提案（Pro） |
 
 「需登录」的接口在未登录时一律返回 `401 unauthenticated`。
 
@@ -419,7 +423,7 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 再在前端按日期分组显示摘要。跨午夜的行程在它覆盖的每一天都显示。
 
-## 9. 饮食助手（阶段 4a、4b）
+## 9. 饮食助手（阶段 4a、4b，变更提案）
 
 术语见 GLOSSARY.md，行为约定见 project-review.md 3.6 和第 4 节。
 
@@ -444,8 +448,9 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 | `message` | string | 必填；去空白后 1–500 个字符 |
 | `reply` | string | 必填；去空白后 1–1000 个字符 |
 | `recommendations` | array | 可选；0 个或 3 个（其他数量返回 `invalid_value`），每项只有 `name`（1–80 个字符）和 `description`（1–200 个字符） |
+| `changes` | array | 可选；那一轮变更提案的摘要，最多 10 项。每项有 `op`（`create`、`update` 或 `delete`）、`date`、`meal_type` 和 `content`（1–200 个字符）：新增和修改是修改后的记录，删除是被删的记录 |
 
-错误的 `field` 形如 `history[2].reply`、`history[0].recommendations[1].name`。历史由前端提交，可能被修改，Go 只校验格式和长度，不校验内容（project-review.md 3.6）。
+错误的 `field` 形如 `history[2].reply`、`history[0].recommendations[1].name`、`history[0].changes[0].op`。历史由前端提交，可能被修改，Go 只校验格式和长度，不校验内容（project-review.md 3.6）。
 
 ```json
 {
@@ -484,7 +489,8 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
       }
     }
   ],
-  "ask_meal_type": false
+  "ask_meal_type": false,
+  "proposal": null
 }
 ```
 
@@ -496,6 +502,31 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
   - `per_100g`：每 100 g 的含量，只作参考，不保存。热量和三大营养素都取整到 1。组合类推荐按整份混合后的平均值给出。
   - AI 服务校验数值范围（与饮食记录相同；每 100 g 的热量 ≤ 900，三大营养素之和 ≤ 100 g）、热量与三大营养素是否大致相符，以及两组数推算出的份量是否在 30–2000 g 之间。
 - `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
+- `proposal`：变更提案（GLOSSARY），只有 Pro 用户、且饮食助手暂存了修改时才有，否则为 `null`。见 9.4。
+
+  ```json
+  {
+    "id": 12,
+    "expires_at": "2026-10-31T14:05:00+09:00",
+    "changes": [
+      { "op": "create", "before": null,
+        "after": { "date": "2026-10-31", "meal_type": "lunch", "content": "ラーメン",
+                   "calories": 500, "protein_g": 20, "fat_g": 15, "carbs_g": 70 } },
+      { "op": "update",
+        "before": { "id": 5, "date": "2026-10-30", "meal_type": "dinner", "content": "カレー",
+                    "calories": null, "protein_g": null, "fat_g": null, "carbs_g": null },
+        "after":  { "id": 5, "date": "2026-10-30", "meal_type": "dinner", "content": "ハヤシライス",
+                    "calories": 700, "protein_g": 18, "fat_g": 24, "carbs_g": 100 } },
+      { "op": "delete",
+        "before": { "id": 6, "date": "2026-10-30", "meal_type": "lunch", "content": "サラダ",
+                    "calories": null, "protein_g": null, "fat_g": null, "carbs_g": null },
+        "after": null }
+    ]
+  }
+  ```
+
+  - `changes`：最多 10 项，按顺序编号 0、1、2…，执行时用这个编号。`before` 是提案时记录的内容（新增为 `null`），`after` 是要写入的内容（删除为 `null`）。新增的营养值是饮食助手的估算，前端标明「目安」。
+  - Go 在保存提案前按 7.1 的规则校验每一项，并检查要修改或删除的记录属于这个用户、同一条记录只出现一次。不通过时整条消息按 `503 ai_unavailable` 处理（退还额度）。
 
 错误：`401`、`403`、`413`（超过 128 KB）、`422`（`date`、`message`、`locale` 或 `history` 不合规则）、`429 rate_limited`（每分钟限流）、`429 quota_exceeded`（调用额度用完）、`503 ai_unavailable`。
 
@@ -521,7 +552,40 @@ Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手
 | GET | `/internal/agent/events?from=&to=` | 同 6.2，但最多 31 天 |
 
 - 认证：`Authorization: Bearer <令牌>`。令牌由 Go 在每条消息开始时签发，随请求传给 AI 服务，只对这一个用户有效，60 秒后过期。签名密钥在 Go 启动时随机生成，只保存在内存中。令牌无效时返回 `401 unauthenticated`。
-- Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`SubmitReply`）。
+- Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`Reply`）和 `backend/internal/assistant/client.go`。请求的上下文中带 `allow_proposal`（用户是否为 Pro），回复中带暂存的修改 `changes`。AI 服务没有写入数据的接口。
+
+### 9.4 `POST /api/assistant/proposals/{id}/execute`
+
+执行一个变更提案（Pro）。需要登录和 CSRF。
+
+请求体：
+
+| 字段 | 类型 | 规则 |
+|---|---|---|
+| `accepted` | integer[] | 必填；用户保留勾选的修改的编号（`changes` 中的下标），至少 1 个，不能重复，不能超出范围（否则 `422`，`field` 为 `accepted`） |
+
+```json
+{ "accepted": [0, 1] }
+```
+
+成功 `200`：每项修改一个结果，顺序与 `changes` 相同。
+
+```json
+{
+  "results": [
+    { "status": "done", "meal_id": 31 },
+    { "status": "failed", "reason": "changed" },
+    { "status": "skipped" }
+  ]
+}
+```
+
+- `status`：`done`（已执行）、`failed`（这一项没有执行）、`skipped`（用户取消了勾选）。
+- `reason`：只在 `failed` 时有。`changed`：提案之后记录被修改过（乐观锁：比较记录的 `updated_at`）；`not_found`：记录已被删除。一项失败不影响其他项。
+- `meal_id`：新增或修改的记录的 `id`。
+- 一个提案只能执行一次，所有项在一个事务中执行。提案执行后和过期后都保留在数据库中，作为审计记录。
+
+错误：`401`、`403 csrf_failed`、`403 pro_required`（当前不是 Pro，包括提案后被降级）、`404`（提案不存在或属于其他用户）、`409 proposal_executed`、`410 proposal_expired`（生成后超过 2 小时）、`422`。
 
 ## 10. 设计决定
 

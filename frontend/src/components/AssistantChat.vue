@@ -4,17 +4,19 @@ import { ApiError, api, type AssistantReply, type MealRecordInput, type Recommen
 import { MAX_TURNS, historyOf, mealQuestions, presetQuestions, quotaText } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
+import { newProposalState, type ProposalState } from '../lib/proposals'
 import { locale, t } from '../i18n'
 import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
+import ProposalCard from './ProposalCard.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
 // chat panel. The conversation lives only in this component, so closing the
 // panel keeps it and reloading the page starts a new one. Every message is
 // sent with the answered turns before it, so the assistant can follow up.
 const props = defineProps<{ date: Ymd; today: Ymd }>()
-// A recommendation was saved as a meal record; the calendar reloads.
-const emit = defineEmits<{ 'meal-added': [] }>()
+// Meal records were added or changed from the chat; the calendar reloads.
+const emit = defineEmits<{ 'meals-changed': [] }>()
 
 const MAX_LENGTH = 500
 
@@ -29,6 +31,8 @@ interface Turn {
   retryable?: boolean
   /** Indexes of recommendations already added to the meal log. */
   added?: number[]
+  /** The state of the reply's change proposal card, if it has one. */
+  proposal?: ProposalState
 }
 
 const open = ref(false)
@@ -69,7 +73,7 @@ async function openMealForm(turn: Turn, index: number) {
 function mealAdded(turn: Turn, index: number) {
   turn.added = [...(turn.added ?? []), index]
   adding.value = null
-  emit('meal-added')
+  emit('meals-changed')
 }
 
 async function scrollToEnd() {
@@ -112,6 +116,7 @@ async function ask(turn: Turn) {
   await scrollToEnd()
   try {
     turn.reply = await api.sendAssistantMessage(turn.date, turn.text, locale.value, history)
+    if (turn.reply.proposal) turn.proposal = newProposalState(turn.reply.proposal)
     turn.status = 'done'
   } catch (err) {
     turn.status = 'failed'
@@ -266,6 +271,13 @@ watch(
               </button>
             </li>
           </ul>
+          <ProposalCard
+            v-if="turn.reply.proposal && turn.proposal"
+            :proposal="turn.reply.proposal"
+            :state="turn.proposal"
+            :today="today"
+            @executed="emit('meals-changed')"
+          />
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
             <li v-for="q in mealQuestions(turn.date, today)" :key="q">
               <button type="button" class="chip" :disabled="busy || full" @click="send(q, turn.date)">{{ q }}</button>
