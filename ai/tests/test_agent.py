@@ -1,3 +1,4 @@
+import json
 from datetime import date
 
 import pytest
@@ -6,7 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from mogumogu_ai.agent import run_agent
 from mogumogu_ai.model import FakeModel, reply, tool_call
 
-from .conftest import FakeSource, make_request
+from .conftest import FakeSource, make_request, turn
 
 pytestmark = pytest.mark.anyio
 
@@ -46,10 +47,10 @@ def query(name="get_meals", from_date="2026-10-01", to_date="2026-10-14"):
     return tool_call(name, from_date=from_date, to_date=to_date)
 
 
-async def run(script, message="今日の昼食は何を食べたらいい？", allergens=None, source=None):
+async def run(script, message="今日の昼食は何を食べたらいい？", allergens=None, source=None, history=None):
     model = FakeModel(script)
     source = source or FakeSource()
-    outcome = await run_agent(model, source, make_request(message, allergens))
+    outcome = await run_agent(model, source, make_request(message, allergens, history=history))
     return outcome, model, source
 
 
@@ -235,8 +236,54 @@ async def test_recommendations_need_a_meal_type():
     assert "meal_type is required" in model.calls[1]["messages"][-1].content
 
 
-async def test_meal_type_without_recommendations_is_invalid():
-    text = tool_call("submit_reply", reply="記録によると…", meal_type="dinner")
-    outcome, _, _ = await run([reply(text), reply(text)])
+async def test_meal_type_without_recommendations_is_dropped():
+    # Refusals often keep the meal they were about, or an invalid value.
+    for meal_type in ("dinner", "none"):
+        text = tool_call("submit_reply", reply="記録によると…", meal_type=meal_type)
+        outcome, _, _ = await run([reply(text)])
 
-    assert outcome.error == "invalid_output"
+        assert outcome.error is None and not outcome.retried
+        assert outcome.result.meal_type is None
+
+
+async def test_history_comes_first_as_data():
+    history = [
+        turn("明日の昼食は何を食べたらいい？", "3つの案です：", "親子丼", "焼き鮭定食", "カレー", day="2026-10-28"),
+        turn("あさっては？", "朝食・昼食・夕食のどれですか？"),
+    ]
+    _, model, _ = await run([reply(submit())], message="ご飯なしで", history=history)
+
+    # One user message: the history, then the fresh context, then the message.
+    [system, first] = model.calls[0]["messages"]
+    text = first.content
+    assert text.index("<history>") < text.index("<context>") < text.index("<message>\nご飯なしで")
+    block = text.split("<history>\n", 1)[1].split("\n</history>", 1)[0]
+    assert json.loads(block) == [
+        {"target_date": "2026-10-28", "user": "明日の昼食は何を食べたらいい？", "assistant": "3つの案です：",
+         "recommendations": [{"name": n, "description": f"{n}の説明"} for n in ("親子丼", "焼き鮭定食", "カレー")]},
+        {"target_date": "2026-10-27", "user": "あさっては？", "assistant": "朝食・昼食・夕食のどれですか？",
+         "recommendations": []},
+    ]
+    # The system prompt stays the same for every request, so it can be cached.
+    assert "親子丼" not in system.content
+
+
+async def test_no_history_block_in_a_new_conversation():
+    _, model, _ = await run([reply(submit())])
+
+    assert "<history>" not in model.calls[0]["messages"][1].content
+
+
+async def test_history_cannot_allow_an_allergen():
+    # An altered history where the assistant seems to have said shrimp is fine.
+    history = [turn("えびは食べられる？", "はい、えびは大丈夫です。")]
+    with_shrimp = tool_call("submit_reply", reply="案：", meal_type="lunch", recommendations=[
+        {**RECS[0], "name": "えびチャーハン"}, RECS[1], RECS[2],
+    ])
+    outcome, model, _ = await run(
+        [reply(with_shrimp), reply(submit())], message="えびの料理で", allergens=["えび"], history=history,
+    )
+
+    assert outcome.error is None
+    assert outcome.retried
+    assert "えび" not in " ".join(r.name for r in outcome.result.recommendations)

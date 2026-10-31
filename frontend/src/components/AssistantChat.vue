@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ApiError, api, type AssistantReply, type MealRecordInput, type Recommendation } from '../api'
-import { mealQuestions, presetQuestions } from '../lib/assistant'
+import { MAX_TURNS, historyOf, mealQuestions, presetQuestions } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
 import { locale, t } from '../i18n'
@@ -10,7 +10,8 @@ import MealTray from './MealTray.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
 // chat panel. The conversation lives only in this component, so closing the
-// panel keeps it and reloading the page starts a new one.
+// panel keeps it and reloading the page starts a new one. Every message is
+// sent with the answered turns before it, so the assistant can follow up.
 const props = defineProps<{ date: Ymd; today: Ymd }>()
 // A recommendation was saved as a meal record; the calendar reloads.
 const emit = defineEmits<{ 'meal-added': [] }>()
@@ -34,6 +35,8 @@ const open = ref(false)
 const turns = ref<Turn[]>([])
 const draft = ref('')
 const busy = computed(() => turns.value.some((t) => t.status === 'pending'))
+// Ten answered messages end a conversation; the user starts a new one.
+const full = computed(() => turns.value.filter((t) => t.status === 'done').length >= MAX_TURNS)
 
 const fab = ref<HTMLButtonElement>()
 const input = ref<HTMLTextAreaElement>()
@@ -89,7 +92,7 @@ async function closePanel() {
 /** Starts a new turn; returns false when nothing was sent. */
 function send(text: string, date: Ymd = props.date): boolean {
   text = text.trim()
-  if (!text || busy.value) return false
+  if (!text || busy.value || full.value) return false
   turns.value.push({ id: nextId++, date, text, status: 'pending' })
   // Work on the reactive copy, so updates to it re-render.
   void ask(turns.value[turns.value.length - 1])
@@ -101,16 +104,19 @@ function sendDraft() {
 }
 
 async function ask(turn: Turn) {
+  // Only the last turn is ever sent or retried, so the turns before it are
+  // the history.
+  const history = historyOf(turns.value.slice(0, turns.value.findIndex((t) => t.id === turn.id)))
   turn.status = 'pending'
   turn.error = undefined
   await scrollToEnd()
   try {
-    turn.reply = await api.sendAssistantMessage(turn.date, turn.text, locale.value)
+    turn.reply = await api.sendAssistantMessage(turn.date, turn.text, locale.value, history)
     turn.status = 'done'
   } catch (err) {
     turn.status = 'failed'
     turn.error = failureText(err)
-    turn.retryable = !(err instanceof ApiError && ['rate_limited', 'validation_failed'].includes(err.code))
+    turn.retryable = !(err instanceof ApiError && ['quota_exceeded', 'validation_failed'].includes(err.code))
   }
   await scrollToEnd()
   input.value?.focus()
@@ -119,11 +125,19 @@ async function ask(turn: Turn) {
 function failureText(err: unknown): string {
   if (err instanceof ApiError) {
     const a = t.value.assistant
-    if (err.code === 'rate_limited') return a.limitReached
+    if (err.code === 'quota_exceeded') return a.limitReached
+    if (err.code === 'rate_limited') return a.tooFast
     if (err.code === 'ai_unavailable') return a.unavailable
     if (err.code === 'validation_failed') return a.tooLong(MAX_LENGTH)
   }
   return errorMessage(err)
+}
+
+async function newConversation() {
+  turns.value = []
+  adding.value = null
+  await nextTick()
+  input.value?.focus()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -178,7 +192,12 @@ watch(
           }}<span v-if="date === today" class="today-mark">{{ t.common.today }}</span>
         </p>
       </div>
-      <button type="button" class="close" :aria-label="t.assistant.close" @click="closePanel">×</button>
+      <div class="header-actions">
+        <button v-if="turns.length" type="button" class="new" :disabled="busy" @click="newConversation">
+          {{ t.assistant.newConversation }}
+        </button>
+        <button type="button" class="close" :aria-label="t.assistant.close" @click="closePanel">×</button>
+      </div>
     </header>
 
     <div ref="scroller" class="messages" aria-live="polite">
@@ -202,7 +221,10 @@ watch(
 
         <div v-else-if="turn.status === 'failed'" class="failure" role="alert">
           <span>{{ turn.error }}</span>
-          <button v-if="turn.retryable" type="button" :disabled="busy" @click="ask(turn)">{{ t.common.retry }}</button>
+          <!-- Retrying an older turn would put it after later ones in the history. -->
+          <button v-if="turn.retryable && i === turns.length - 1" type="button" :disabled="busy" @click="ask(turn)">
+            {{ t.common.retry }}
+          </button>
         </div>
 
         <template v-else-if="turn.reply">
@@ -246,11 +268,16 @@ watch(
           </ul>
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
             <li v-for="q in mealQuestions(turn.date, today)" :key="q">
-              <button type="button" class="chip" :disabled="busy" @click="send(q, turn.date)">{{ q }}</button>
+              <button type="button" class="chip" :disabled="busy || full" @click="send(q, turn.date)">{{ q }}</button>
             </li>
           </ul>
         </template>
       </template>
+
+      <div v-if="full" class="limit" role="status">
+        <span>{{ t.assistant.turnLimit(MAX_TURNS) }}</span>
+        <button type="button" class="primary" @click="newConversation">{{ t.assistant.newConversation }}</button>
+      </div>
     </div>
 
     <form class="composer" @submit.prevent="sendDraft">
@@ -262,9 +289,10 @@ watch(
         rows="2"
         :maxlength="MAX_LENGTH"
         :placeholder="t.assistant.inputPlaceholder"
+        :disabled="full"
         @keydown="onKeydown"
       ></textarea>
-      <button type="submit" class="primary" :disabled="busy || !draft.trim()">{{ t.assistant.send }}</button>
+      <button type="submit" class="primary" :disabled="busy || full || !draft.trim()">{{ t.assistant.send }}</button>
       <small v-if="draft.length > MAX_LENGTH - 50" class="count">{{ draft.length }} / {{ MAX_LENGTH }}</small>
     </form>
   </section>
@@ -354,6 +382,17 @@ watch(
   background: var(--today);
   color: var(--on-today);
   font-weight: 700;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.new {
+  padding: 0.25rem 0.75rem;
+  font-size: var(--fs-small);
 }
 
 .close {
@@ -616,6 +655,17 @@ watch(
 .failure button {
   padding: 0.25rem 0.75rem;
   font-size: var(--fs-small);
+}
+
+.limit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 0.9375rem;
 }
 
 .composer {

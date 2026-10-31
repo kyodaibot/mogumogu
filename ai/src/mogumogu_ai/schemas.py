@@ -58,11 +58,37 @@ class Context(BaseModel):
     meals_range: DateRange
 
 
+class HistoryDish(BaseModel):
+    """What the conversation history keeps of a recommendation."""
+
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=200)
+
+
+class Turn(BaseModel):
+    """One earlier turn of the conversation (project-review 3.6). The browser
+    sends it back and Go only checks its shape, so it is untrusted."""
+
+    date: date
+    message: str = Field(min_length=1, max_length=500)
+    reply: str = Field(min_length=1, max_length=1000)
+    recommendations: list[HistoryDish] = Field(default_factory=list)
+
+    @field_validator("recommendations")
+    @classmethod
+    def zero_or_three(cls, v: list[HistoryDish]) -> list[HistoryDish]:
+        if len(v) not in (0, 3):
+            raise ValueError("recommendations must be empty or exactly 3")
+        return v
+
+
 class ReplyRequest(BaseModel):
     """Body of POST /internal/reply, sent by Go."""
 
     message: str = Field(min_length=1, max_length=500)
     context: Context
+    # Earlier turns, oldest first; at most 10 turns in a conversation.
+    history: list[Turn] = Field(default_factory=list, max_length=9)
     # Short-lived token Go issued for this request; sent back on tool calls.
     token: str = Field(min_length=1)
 
@@ -186,14 +212,22 @@ class SubmitReply(BaseModel):
             raise ValueError("recommendations must be empty or exactly 3")
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def no_meal_type_without_recommendations(cls, data):
+        # A text-only reply often still carries the meal it was about (or a
+        # made-up value). It means nothing there, so drop it rather than
+        # reject a reply that is otherwise fine.
+        if isinstance(data, dict) and not data.get("recommendations"):
+            return {**data, "meal_type": None}
+        return data
+
     @model_validator(mode="after")
     def no_recommendations_when_asking(self) -> "SubmitReply":
         if self.ask_meal_type and self.recommendations:
             raise ValueError("no recommendations allowed when ask_meal_type is true")
         if self.recommendations and self.meal_type is None:
             raise ValueError("meal_type is required with recommendations")
-        if not self.recommendations and self.meal_type is not None:
-            raise ValueError("meal_type must be null without recommendations")
         return self
 
     def rounded(self) -> "SubmitReply":

@@ -102,6 +102,14 @@ export interface AssistantReply {
   meal_type: MealType | null
 }
 
+/** One earlier turn sent back with a message (docs/api.md 9.1). */
+export interface HistoryTurn {
+  date: string
+  message: string
+  reply: string
+  recommendations: { name: string; description: string }[]
+}
+
 let unauthorizedHandler: () => void = () => {}
 
 /** Registers what to do when the session turns out to be invalid. */
@@ -138,7 +146,8 @@ export const api = {
   updateMeal: (id: number, m: MealRecordInput) => req<MealRecord>('PUT', `/api/meal-records/${id}`, m),
   deleteMeal: (id: number) => req<void>('DELETE', `/api/meal-records/${id}`),
 
-  /** `locale` is the interface language; the reply is written in it. */
-  sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en') =>
-    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale }),
+  /** `locale` is the interface language; the reply is written in it.
+   *  `history` is the conversation so far, oldest first. */
+  sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en', history: HistoryTurn[]) =>
+    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }),
 }
