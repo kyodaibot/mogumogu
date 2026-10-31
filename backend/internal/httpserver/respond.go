@@ -29,6 +29,8 @@ type errorBody struct {
 	Code    string       `json:"code"`
 	Message string       `json:"message"`
 	Details []fieldError `json:"details,omitempty"`
+	// Limit is the user's own daily quota, on quota_exceeded only.
+	Limit int `json:"limit,omitempty"`
 }
 
 func abortError(c *gin.Context, status int, code, message string) {
@@ -46,6 +48,16 @@ func abortRateLimited(c *gin.Context, retryAfter time.Duration) {
 	abortError(c, http.StatusTooManyRequests, "rate_limited", "Too many requests.")
 }
 
+// abortQuotaExceeded answers a message over the daily quota of the meal
+// assistant; Retry-After points at the next day. limit is the user's own
+// quota when that is what ran out, or 0 when the site's did.
+func abortQuotaExceeded(c *gin.Context, retryAfter time.Duration, limit int) {
+	c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": errorBody{
+		Code: "quota_exceeded", Message: "Daily quota exceeded.", Limit: limit,
+	}})
+}
+
 func abortNotFound(c *gin.Context) {
 	abortError(c, http.StatusNotFound, "not_found", "Resource not found.")
 }
@@ -61,7 +73,13 @@ func abortInternal(c *gin.Context, logger *slog.Logger, err error) {
 // trailing data and bodies over maxBodyBytes. It writes the error response and
 // returns false on failure.
 func decodeJSON(c *gin.Context, dst any) bool {
-	body := http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	return decodeJSONLimit(c, dst, maxBodyBytes)
+}
+
+// decodeJSONLimit is decodeJSON with a body limit of its own, for the few
+// requests that may be larger.
+func decodeJSONLimit(c *gin.Context, dst any, limit int64) bool {
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
 

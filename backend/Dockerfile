@@ -10,12 +10,14 @@ COPY backend/ ./
 # CGO off gives static binaries that run on distroless/static. Migrations and
 # the time zone database are embedded, so no other files are needed.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/admin ./cmd/admin
 
 # --- Stage 2: only the binaries, no shell, no source ---
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/server /out/migrate /
+COPY --from=build /out/server /out/migrate /out/admin /
 USER nonroot:nonroot
 EXPOSE 8080
-# compose runs `/migrate up` from the same image for the migrate service.
+# compose runs `/migrate up` from the same image for the migrate service;
+# `/admin` is run by hand on the server (docs/operations.md).
 CMD ["/server"]

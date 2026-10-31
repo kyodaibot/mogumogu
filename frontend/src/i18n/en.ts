@@ -26,6 +26,8 @@ export const en = {
     profile: 'Profile',
     logout: 'Log out',
     loggingOut: 'Logging out…',
+    tiers: { normal: 'Normal', pro: 'Pro' },
+    tierTitle: 'Account tier',
   },
   meals: {
     breakfast: 'Breakfast',
@@ -138,6 +140,8 @@ export const en = {
     inputPlaceholder: 'e.g. Nothing spicy, I only have 15 minutes',
     send: 'Send',
     limitReached: 'You have used up today’s questions. Come back tomorrow.',
+    ownLimitReached: (limit: number) => `You have reached today’s limit of ${limit} questions. Come back tomorrow.`,
+    tooFast: 'Too many messages in a short time. Wait a moment, then retry.',
     unavailable: 'The meal assistant could not answer this time. Please retry.',
     tooLong: (max: number) => `Messages can be up to ${max} characters.`,
     /** How a target date reads inside a question. */
@@ -152,6 +156,9 @@ export const en = {
     approx: 'About',
     estimateNote: '(estimate)',
     estimatePer100g: (n: Nutrition) => `About ${n.calories} kcal / 100g · ${pfc(n)} / 100g (estimate)`,
+    /** Clears the conversation; the panel starts over. */
+    newConversation: 'New chat',
+    turnLimit: (max: number) => `This chat has reached ${max} messages. Start a new chat to keep going.`,
     addToLog: 'Add to meal log',
     added: 'Added ✓',
   },
@@ -160,6 +167,7 @@ export const en = {
       invalid_credentials: 'Incorrect username or password.',
       username_taken: 'This username is already taken.',
       rate_limited: 'Too many attempts. Please try again later.',
+      quota_exceeded: 'You have used up today’s questions. Come back tomorrow.',
       csrf_failed: 'Security check failed. Reload the page and try again.',
       unauthenticated: 'Your session has expired. Please log in again.',
       not_found: 'This record does not exist or was deleted.',

@@ -13,13 +13,16 @@ export class ApiError extends Error {
   readonly status: number
   readonly code: string
   readonly details: FieldError[]
+  /** The user's own daily quota; only on quota_exceeded when that is what ran out. */
+  readonly limit?: number
 
-  constructor(status: number, code: string, message: string, details: FieldError[] = []) {
+  constructor(status: number, code: string, message: string, details: FieldError[] = [], limit?: number) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.details = details
+    this.limit = limit
   }
 }
 
@@ -64,7 +67,8 @@ export function createClient(deps: ClientDeps) {
     const data = await res.json().catch(() => null)
     const e = data?.error
     if (e && typeof e.code === 'string') {
-      return new ApiError(res.status, e.code, e.message ?? '', Array.isArray(e.details) ? e.details : [])
+      const limit = typeof e.limit === 'number' ? e.limit : undefined
+      return new ApiError(res.status, e.code, e.message ?? '', Array.isArray(e.details) ? e.details : [], limit)
     }
     // Not our JSON, e.g. the dev proxy's 502 when the backend is down.
     return new ApiError(res.status, res.status >= 500 ? 'server_unavailable' : 'unexpected_response', res.statusText)

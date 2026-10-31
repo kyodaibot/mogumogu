@@ -23,6 +23,16 @@ if (!profileDir) {
 }
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 
+// Changes an account tier the only way there is: cmd/admin on the database.
+function setTier(username, tier) {
+  if (!process.env.E2E_DB) throw new Error('E2E_DB is not set (run through e2e/run.sh)')
+  execFileSync('go', ['run', './cmd/admin', 'tier', username, tier], {
+    cwd: new URL('../backend', import.meta.url).pathname,
+    env: { ...process.env, DB_NAME: process.env.E2E_DB },
+    stdio: 'ignore',
+  })
+}
+
 function findChrome() {
   if (process.env.CHROME) {
     if (existsSync(process.env.CHROME)) return process.env.CHROME
@@ -242,6 +252,19 @@ async function main() {
   check('each message carries its own target date',
     asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明日の夕食は何を食べたらいい？',
     asks.map((a) => `${a.date} ${a.message}`).join(' | '))
+  check('each message carries the answered turns before it as history',
+    asks[0].history.length === 0 && asks[1].history.length === 1 && asks[1].history[0].recommendations.length === 3 &&
+    asks[2].history.length === 2 && asks[2].history[1].message === 'その日は何を食べたらいい？' && !('reason' in asks[1].history[0].recommendations[0]),
+    asks.map((a) => a.history.length).join(' / '))
+
+  // A follow-up only makes sense with the history: the fake model names the
+  // earlier recommendation it builds on.
+  await fill('#assistant-input', 'ご飯なしで')
+  await click('.composer button[type=submit]')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 9`, 'follow-up recommendations')
+  const followUp = await evaluate(`[...document.querySelectorAll('.panel .bubble.assistant')].at(-1).innerText`)
+  const followAsk = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body)).at(-1)
+  check('a follow-up is answered from the history', followUp.includes('照り焼きチキン丼') && followAsk.history.length === 3, followUp)
 
   // A recommendation shows its estimate and can be added to the meal log.
   const tomorrowRec = `document.querySelectorAll('.panel .rec')[3]`
@@ -260,6 +283,10 @@ async function main() {
     (await evaluate(`${tomorrowRec}.querySelector('button.add').innerText`)).includes('追加しました'), JSON.stringify(saved))
   await waitFor(`(${tomorrowCellExpr}).getAttribute('aria-label').includes('夕食')`, 'calendar reloaded with the new dinner')
   check('the calendar shows the added meal right away', true)
+
+  await click('.panel .new')
+  await waitFor(`!!document.querySelector('.panel .intro .chip') && !document.querySelector('.panel .bubble')`, 'new chat')
+  check('a new chat clears the conversation', !(await evaluate(`!!${q('.panel .new')}`)))
   await click('.panel .close')
   await clickText('button', '今日')
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'back to today')
@@ -303,6 +330,10 @@ async function main() {
   await waitFor(`document.body.innerText.includes('E2E サラダチキン（大盛り）') && !document.querySelector('select')`, 'meal edited')
   check('meal edited', true)
 
+  check('a new account shows the Normal tier', (await textOf('.account .tier')) === 'Normal', await textOf('.account .tier'))
+  // Made Pro before the reload, which then shows the badge.
+  setTier(username, 'pro')
+
   // Persistence: reload. Page.reload returns before the new document exists, so
   // mark the old one and wait until the mark is gone and the data is rendered.
   await evaluate('window.__beforeReload = true')
@@ -310,6 +341,7 @@ async function main() {
   await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
     document.body.innerText.includes('E2E 夜間の実験') && document.body.innerText.includes('（大盛り）')`, 'data after reload')
   check('data still there after reload', true)
+  check('after the admin command makes the account Pro, the tier shows Pro', (await textOf('.account .tier')) === 'Pro', await textOf('.account .tier'))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
   check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
@@ -367,6 +399,7 @@ async function main() {
   const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
   check('an English question asks for, and gets, an English reply',
     JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
+  check('the first message of a new chat has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.day.today')`, 'calendar after reload')

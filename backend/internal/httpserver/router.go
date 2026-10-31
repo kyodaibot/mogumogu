@@ -30,17 +30,31 @@ type Deps struct {
 	CSRF            *auth.CSRF
 	LoginLimiter    *auth.Limiter
 	RegisterLimiter *auth.Limiter
-	AllowedOrigins  []string
-	CookieSecure    bool
+	// Messages to the meal assistant per user in a short window.
+	AssistantLimiter *auth.Limiter
+	AllowedOrigins   []string
+	CookieSecure     bool
 	// TrustedProxies are the peers whose X-Forwarded-For is believed (see
 	// config.Config). Nil means ClientIP is always the TCP peer.
 	TrustedProxies []string
 	// The meal assistant: the AI service, the tokens its query tools use, and
-	// the daily message quota per user and for the whole site.
-	Assistant          Replier
-	AgentTokens        *auth.AgentTokens
-	AssistantUserLimit int
-	AssistantSiteLimit int
+	// the daily message quotas.
+	Assistant       Replier
+	AgentTokens     *auth.AgentTokens
+	AssistantLimits DailyLimits
+}
+
+// DailyLimits are the meal assistant's daily message quotas: per user by
+// account tier, and for the whole site.
+type DailyLimits struct {
+	Normal, Pro, Site int
+}
+
+func (l DailyLimits) forTier(t store.Tier) int {
+	if t == store.TierPro {
+		return l.Pro
+	}
+	return l.Normal
 }
 
 // InternalDeps are the internal router's collaborators.
@@ -51,19 +65,19 @@ type InternalDeps struct {
 }
 
 type api struct {
-	logger          *slog.Logger
-	store           *store.Store
-	sessions        *auth.Sessions
-	csrf            *auth.CSRF
-	loginLimiter    *auth.Limiter
-	registerLimiter *auth.Limiter
-	allowedOrigins  []string
-	cookieSecure    bool
+	logger           *slog.Logger
+	store            *store.Store
+	sessions         *auth.Sessions
+	csrf             *auth.CSRF
+	loginLimiter     *auth.Limiter
+	registerLimiter  *auth.Limiter
+	assistantLimiter *auth.Limiter
+	allowedOrigins   []string
+	cookieSecure     bool
 
-	assistant          Replier
-	agentTokens        *auth.AgentTokens
-	assistantUserLimit int
-	assistantSiteLimit int
+	assistant       Replier
+	agentTokens     *auth.AgentTokens
+	assistantLimits DailyLimits
 }
 
 func init() {
@@ -92,10 +106,9 @@ func NewRouter(d Deps) *gin.Engine {
 
 	a := &api{
 		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
-		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter,
+		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter, assistantLimiter: d.AssistantLimiter,
 		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
-		assistant: d.Assistant, agentTokens: d.AgentTokens,
-		assistantUserLimit: d.AssistantUserLimit, assistantSiteLimit: d.AssistantSiteLimit,
+		assistant: d.Assistant, agentTokens: d.AgentTokens, assistantLimits: d.AssistantLimits,
 	}
 	app := r.Group("/api", a.resolveSession)
 

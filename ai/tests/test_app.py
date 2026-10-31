@@ -6,7 +6,7 @@ from mogumogu_ai.app import app
 from mogumogu_ai.demo import demo_model
 from mogumogu_ai.model import FakeModel, reply, tool_call
 
-from .conftest import make_request
+from .conftest import make_request, turn
 
 
 @pytest.fixture
@@ -56,6 +56,26 @@ def test_demo_model_answers_in_the_requested_language(client):
     data = resp.json()
     assert len(data["recommendations"]) == 3
     assert data["reply"].startswith("(Test reply)")
+
+
+def test_demo_model_follows_up_on_the_history(client):
+    req = make_request("ご飯なしで", history=[
+        turn("明日の夕食は何を食べたらいい？", "3つの案です：", "照り焼きチキン丼", "鮭おにぎりセット", "豆腐と野菜の鍋"),
+    ]).model_dump(mode="json", by_alias=True)
+    resp = client(demo_model()).post("/internal/reply", json=req)
+
+    data = resp.json()
+    assert "照り焼きチキン丼" in data["reply"]
+    assert data["meal_type"] == "dinner"
+    assert len(data["recommendations"]) == 3
+
+
+def test_rejects_bad_history(client):
+    c = client(demo_model())
+    ok = turn("q", "a")
+    for history in ([ok] * 10, [turn("q", "a", "x", "y")], [{**ok, "reply": "長" * 1001}]):
+        resp = c.post("/internal/reply", json={**body(), "history": history})
+        assert resp.status_code == 422, history
 
 
 def test_demo_model_text_only(client):

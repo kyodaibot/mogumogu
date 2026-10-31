@@ -59,6 +59,9 @@ func TestLoadValidWithDefaults(t *testing.T) {
 	if cfg.TrustedProxies != nil {
 		t.Fatalf("trusted proxies = %v, want none by default", cfg.TrustedProxies)
 	}
+	if as := cfg.Assistant; as.NormalLimit != 30 || as.ProLimit != 100 || as.SiteLimit != 300 {
+		t.Fatalf("assistant limits = %d/%d/%d", as.NormalLimit, as.ProLimit, as.SiteLimit)
+	}
 }
 
 func TestLoadOverridesDefaults(t *testing.T) {
@@ -71,6 +74,8 @@ func TestLoadOverridesDefaults(t *testing.T) {
 	env["ALLOWED_ORIGINS"] = "http://localhost:5173, https://app.example.com"
 	env["COOKIE_SECURE"] = "true"
 	env["TRUSTED_PROXIES"] = "10.0.0.0/8, 172.16.0.0/12,192.0.2.10"
+	env["ASSISTANT_NORMAL_DAILY_LIMIT"] = "5"
+	env["ASSISTANT_PRO_DAILY_LIMIT"] = "50"
 
 	cfg, err := Load(lookupFrom(env))
 	if err != nil {
@@ -84,6 +89,9 @@ func TestLoadOverridesDefaults(t *testing.T) {
 	}
 	if p := cfg.TrustedProxies; len(p) != 3 || p[0] != "10.0.0.0/8" || p[1] != "172.16.0.0/12" || p[2] != "192.0.2.10" {
 		t.Fatalf("trusted proxies = %v", p)
+	}
+	if as := cfg.Assistant; as.NormalLimit != 5 || as.ProLimit != 50 {
+		t.Fatalf("assistant limits = %d/%d", as.NormalLimit, as.ProLimit)
 	}
 }
 

@@ -17,7 +17,8 @@ const (
 	DefaultAppPort      = 8080
 	defaultInternalPort = 8081
 	defaultAIServiceURL = "http://127.0.0.1:8090"
-	defaultUserLimit    = 30
+	defaultNormalLimit  = 30
+	defaultProLimit     = 100
 	defaultSiteLimit    = 300
 	defaultSSLMode      = "disable"
 	defaultJWTTTL       = 7 * 24 * time.Hour
@@ -62,9 +63,10 @@ type AuthConfig struct {
 type AssistantConfig struct {
 	// ServiceURL is the base URL of the AI service (ai/).
 	ServiceURL string
-	// Daily message quota per user and for the whole site.
-	UserLimit int
-	SiteLimit int
+	// Daily message quota per user, by account tier, and for the whole site.
+	NormalLimit int
+	ProLimit    int
+	SiteLimit   int
 }
 
 // LogValue keeps the password out of logs if the struct is ever logged.
@@ -234,9 +236,10 @@ func (r *reader) auth() AuthConfig {
 
 func (r *reader) assistant() AssistantConfig {
 	a := AssistantConfig{
-		ServiceURL: defaultAIServiceURL,
-		UserLimit:  r.positiveInt("ASSISTANT_USER_DAILY_LIMIT", defaultUserLimit),
-		SiteLimit:  r.positiveInt("ASSISTANT_SITE_DAILY_LIMIT", defaultSiteLimit),
+		ServiceURL:  defaultAIServiceURL,
+		NormalLimit: r.positiveInt("ASSISTANT_NORMAL_DAILY_LIMIT", defaultNormalLimit),
+		ProLimit:    r.positiveInt("ASSISTANT_PRO_DAILY_LIMIT", defaultProLimit),
+		SiteLimit:   r.positiveInt("ASSISTANT_SITE_DAILY_LIMIT", defaultSiteLimit),
 	}
 	if raw := r.get("AI_SERVICE_URL"); raw != "" {
 		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

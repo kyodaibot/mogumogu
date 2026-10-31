@@ -68,7 +68,8 @@ services:
       AI_SERVICE_URL: http://ai:8090
       # The internal API for the AI service's query tools; not published.
       INTERNAL_PORT: "8081"
-      ASSISTANT_USER_DAILY_LIMIT: ${ASSISTANT_USER_DAILY_LIMIT:-}
+      ASSISTANT_NORMAL_DAILY_LIMIT: ${ASSISTANT_NORMAL_DAILY_LIMIT:-}
+      ASSISTANT_PRO_DAILY_LIMIT: ${ASSISTANT_PRO_DAILY_LIMIT:-}
       ASSISTANT_SITE_DAILY_LIMIT: ${ASSISTANT_SITE_DAILY_LIMIT:-}
     healthcheck:
       test: ["CMD", "/server", "healthcheck"]

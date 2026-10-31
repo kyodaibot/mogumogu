@@ -39,8 +39,27 @@ type Context struct {
 type Request struct {
 	Message string  `json:"message"`
 	Context Context `json:"context"`
+	// Earlier turns of the conversation, oldest first. Sent by the browser and
+	// only checked for shape, so the AI service treats it as untrusted.
+	History []Turn `json:"history"`
 	// Token lets the agent's query tools read this user's data (auth.AgentTokens).
 	Token string `json:"token"`
+}
+
+// Turn is one answered message of the conversation history
+// (project-review 3.6): what the user asked about which day, and what the
+// assistant replied and recommended.
+type Turn struct {
+	Date            string     `json:"date"`
+	Message         string     `json:"message"`
+	Reply           string     `json:"reply"`
+	Recommendations []TurnDish `json:"recommendations"`
+}
+
+// TurnDish is what the history keeps of a recommendation.
+type TurnDish struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // Nutrition holds the four values of an estimate, already rounded by the AI

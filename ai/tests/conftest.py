@@ -10,11 +10,21 @@ def anyio_backend():
     return "asyncio"
 
 
+def turn(message: str, reply: str, *dishes: str, day: str = "2026-10-27") -> dict:
+    """One history entry as Go sends it."""
+    return {
+        "date": day, "message": message, "reply": reply,
+        "recommendations": [{"name": d, "description": f"{d}の説明"} for d in dishes],
+    }
+
+
 def make_request(
-    message: str = "今日の昼食は何を食べたらいい？", allergens: list[str] | None = None, locale: str = "ja"
+    message: str = "今日の昼食は何を食べたらいい？", allergens: list[str] | None = None, locale: str = "ja",
+    history: list[dict] | None = None,
 ) -> ReplyRequest:
     return ReplyRequest.model_validate({
         "message": message,
+        "history": history or [],
         "token": "test-token",
         "context": {
             "target_date": "2026-10-27",

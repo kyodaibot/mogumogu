@@ -60,7 +60,7 @@ services:
       AI_SERVICE_URL: http://ai:8090
       INTERNAL_PORT: "8081"
       # Lower than the default 300 for a public demo (about 30 USD a month at
-      # most). The per-user default of 30 stays.
+      # most). The per-user defaults stay: 30 for normal, 100 for pro.
       ASSISTANT_SITE_DAILY_LIMIT: "100"
     healthcheck:
       test: ["CMD", "/server", "healthcheck"]

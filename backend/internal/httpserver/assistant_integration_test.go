@@ -61,9 +61,10 @@ type assistantEnv struct {
 	internal *httptest.Server
 	ai       *fakeAI
 	tokens   *auth.AgentTokens
+	store    *store.Store
 }
 
-func newAssistantEnv(t *testing.T, db *testdb.DB, userLimit, siteLimit int) assistantEnv {
+func newAssistantEnv(t *testing.T, db *testdb.DB, limits DailyLimits) assistantEnv {
 	t.Helper()
 	tokens, err := auth.NewAgentTokens()
 	if err != nil {
@@ -72,23 +73,23 @@ func newAssistantEnv(t *testing.T, db *testdb.DB, userLimit, siteLimit int) assi
 	ai := &fakeAI{}
 	st := store.New(db.Gorm)
 	srv := httptest.NewServer(NewRouter(Deps{
-		Logger:             discardLogger(),
-		DB:                 db.SQL,
-		Store:              st,
-		Sessions:           auth.NewSessions(itJWTSecret, "mogumogu", "mogumogu-web", time.Hour),
-		CSRF:               auth.NewCSRF(itCSRFSecret),
-		LoginLimiter:       auth.NewLimiter(5, 15*time.Minute),
-		RegisterLimiter:    auth.NewLimiter(1000, time.Hour),
-		AllowedOrigins:     []string{testOrigin},
-		Assistant:          ai,
-		AgentTokens:        tokens,
-		AssistantUserLimit: userLimit,
-		AssistantSiteLimit: siteLimit,
+		Logger:           discardLogger(),
+		DB:               db.SQL,
+		Store:            st,
+		Sessions:         auth.NewSessions(itJWTSecret, "mogumogu", "mogumogu-web", time.Hour),
+		CSRF:             auth.NewCSRF(itCSRFSecret),
+		LoginLimiter:     auth.NewLimiter(5, 15*time.Minute),
+		RegisterLimiter:  auth.NewLimiter(1000, time.Hour),
+		AssistantLimiter: auth.NewLimiter(6, time.Minute),
+		AllowedOrigins:   []string{testOrigin},
+		Assistant:        ai,
+		AgentTokens:      tokens,
+		AssistantLimits:  limits,
 	}))
 	internal := httptest.NewServer(NewInternalRouter(InternalDeps{Logger: discardLogger(), Store: st, AgentTokens: tokens}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(internal.Close)
-	return assistantEnv{srv: srv, internal: internal, ai: ai, tokens: tokens}
+	return assistantEnv{srv: srv, internal: internal, ai: ai, tokens: tokens, store: st}
 }
 
 func fmtJSON(t *testing.T, v any) string {
@@ -105,7 +106,7 @@ func message(date, text string) map[string]string {
 }
 
 func TestIntegrationAssistantContext(t *testing.T) {
-	env := newAssistantEnv(t, testdb.New(t), 30, 300)
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 30, Pro: 100, Site: 300})
 	b := signUp(t, env.srv, "asker")
 	today := tz.Today(time.Now())
 	day := func(n int) string { return today.AddDays(n).String() }
@@ -187,7 +188,7 @@ func TestIntegrationAssistantContext(t *testing.T) {
 }
 
 func TestIntegrationAssistantValidation(t *testing.T) {
-	env := newAssistantEnv(t, testdb.New(t), 30, 300)
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 30, Pro: 100, Site: 300})
 
 	anon := newBrowser(t, env.srv)
 	anon.expect(200, "GET", "/api/auth/csrf", nil)
@@ -215,7 +216,7 @@ func TestIntegrationAssistantValidation(t *testing.T) {
 }
 
 func TestIntegrationAssistantQuota(t *testing.T) {
-	env := newAssistantEnv(t, testdb.New(t), 3, 5)
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 3, Pro: 100, Site: 5})
 	alice := signUp(t, env.srv, "alice")
 	bob := signUp(t, env.srv, "bob")
 	send := func(b *browser) resp {
@@ -228,7 +229,9 @@ func TestIntegrationAssistantQuota(t *testing.T) {
 		}
 	}
 	r := send(alice)
-	if r.status != 429 || r.errCode(t) != "rate_limited" || r.header.Get("Retry-After") == "" {
+	var e errResp
+	r.json(t, &e)
+	if r.status != 429 || e.Error.Code != "quota_exceeded" || e.Error.Limit != 3 || r.header.Get("Retry-After") == "" {
 		t.Fatalf("alice over her limit: %d %s", r.status, r.body)
 	}
 	if env.ai.calls() != 3 {
@@ -246,13 +249,206 @@ func TestIntegrationAssistantQuota(t *testing.T) {
 			t.Fatalf("bob message %d: %d %s", i+1, r.status, r.body)
 		}
 	}
-	if r := send(bob); r.status != 429 {
+	// The site's limit, not bob's: no number for him.
+	r = send(bob)
+	e = errResp{}
+	r.json(t, &e)
+	if r.status != 429 || e.Error.Code != "quota_exceeded" || e.Error.Limit != 0 {
 		t.Fatalf("site limit: %d %s", r.status, r.body)
 	}
 }
 
+func TestIntegrationAssistantTiers(t *testing.T) {
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 1, Pro: 3, Site: 100})
+	// Six messages in all, which is also the per-minute limit.
+	carol := signUp(t, env.srv, "carol")
+	send := func() resp {
+		return carol.do("POST", "/api/assistant/messages", message("2026-10-27", "吃什么"))
+	}
+	limitOf := func(r resp) int {
+		t.Helper()
+		var e errResp
+		r.json(t, &e)
+		if r.status != 429 || e.Error.Code != "quota_exceeded" {
+			t.Fatalf("want quota_exceeded: %d %s", r.status, r.body)
+		}
+		return e.Error.Limit
+	}
+	tierOf := func() string {
+		t.Helper()
+		var me meJSON
+		carol.expect(200, "GET", "/api/auth/me", nil).json(t, &me)
+		return me.User.Tier
+	}
+	ctx := context.Background()
+
+	if tier := tierOf(); tier != "normal" {
+		t.Fatalf("new user's tier: %q", tier)
+	}
+	carol.expect(200, "POST", "/api/assistant/messages", message("2026-10-27", "吃什么"))
+	if limit := limitOf(send()); limit != 1 {
+		t.Fatalf("normal limit: %d", limit)
+	}
+
+	// Upgraded the same day: the messages already sent still count, and the
+	// change applies without logging in again.
+	if err := env.store.SetUserTier(ctx, "carol", store.TierPro); err != nil {
+		t.Fatal(err)
+	}
+	if tier := tierOf(); tier != "pro" {
+		t.Fatalf("tier after upgrade: %q", tier)
+	}
+	for range 2 {
+		carol.expect(200, "POST", "/api/assistant/messages", message("2026-10-27", "吃什么"))
+	}
+	if limit := limitOf(send()); limit != 3 {
+		t.Fatalf("pro limit: %d", limit)
+	}
+
+	if err := env.store.SetUserTier(ctx, "carol", store.TierNormal); err != nil {
+		t.Fatal(err)
+	}
+	if limit := limitOf(send()); limit != 1 {
+		t.Fatalf("limit after downgrade: %d", limit)
+	}
+	if env.ai.calls() != 3 {
+		t.Fatalf("AI service called %d times, want 3", env.ai.calls())
+	}
+
+	if err := env.store.SetUserTier(ctx, "nobody", store.TierPro); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown user: %v", err)
+	}
+	// The database refuses tiers that do not exist, whatever the caller.
+	if err := env.store.SetUserTier(ctx, "carol", store.Tier("gold")); err == nil {
+		t.Fatal("tier gold was stored")
+	}
+}
+
+// turn is one entry of a request's history, as the browser sends it.
+func turn(date, msg, reply string, dishes ...string) map[string]any {
+	recs := []map[string]string{}
+	for _, d := range dishes {
+		recs = append(recs, map[string]string{"name": d, "description": d + "の説明"})
+	}
+	return map[string]any{"date": date, "message": msg, "reply": reply, "recommendations": recs}
+}
+
+func withHistory(date, msg string, history ...map[string]any) map[string]any {
+	return map[string]any{"date": date, "message": msg, "history": history}
+}
+
+func TestIntegrationAssistantHistory(t *testing.T) {
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 30, Pro: 100, Site: 300})
+	b := signUp(t, env.srv, "talker")
+
+	// A new conversation: the AI service gets an empty history, not null.
+	b.expect(200, "POST", "/api/assistant/messages", message("2026-10-31", "明日の昼食は？"))
+	if h := env.ai.last().History; h == nil || len(h) != 0 {
+		t.Fatalf("no history: %#v", h)
+	}
+
+	// Earlier turns are passed on in order, trimmed like the message.
+	b.expect(200, "POST", "/api/assistant/messages", withHistory("2026-11-01", "ご飯なしで",
+		turn("2026-10-31", " 明日の昼食は？ ", "3つ提案します。", "親子丼", "焼き鮭定食", "カレー"),
+		turn("2026-11-01", "あさっては？", "何食ですか？"),
+	))
+	h := env.ai.last().History
+	want := []assistant.Turn{
+		{Date: "2026-10-31", Message: "明日の昼食は？", Reply: "3つ提案します。", Recommendations: []assistant.TurnDish{
+			{Name: "親子丼", Description: "親子丼の説明"}, {Name: "焼き鮭定食", Description: "焼き鮭定食の説明"}, {Name: "カレー", Description: "カレーの説明"},
+		}},
+		{Date: "2026-11-01", Message: "あさっては？", Reply: "何食ですか？", Recommendations: []assistant.TurnDish{}},
+	}
+	if fmtJSON(t, h) != fmtJSON(t, want) {
+		t.Fatalf("history:\n got %s\nwant %s", fmtJSON(t, h), fmtJSON(t, want))
+	}
+
+	// The longest valid conversation: nine turns at every length limit. With
+	// 4-byte characters it is over the general 64 KB body limit.
+	long := func(n int) string { return strings.Repeat("😀", n) }
+	full := make([]map[string]any, 9)
+	for i := range full {
+		full[i] = map[string]any{"date": "2026-10-31", "message": long(500), "reply": long(1000), "recommendations": []map[string]string{
+			{"name": long(80), "description": long(200)}, {"name": long(80), "description": long(200)}, {"name": long(80), "description": long(200)},
+		}}
+	}
+	if body := fmtJSON(t, withHistory("2026-10-31", long(500), full...)); len(body) <= 64<<10 {
+		t.Fatalf("test body is only %d bytes", len(body))
+	}
+	b.expect(200, "POST", "/api/assistant/messages", withHistory("2026-10-31", long(500), full...))
+	calls := env.ai.calls()
+
+	tooBig := map[string]any{"date": "2026-10-31", "message": "hi", "padding": strings.Repeat("x", 128<<10)}
+	if r := b.do("POST", "/api/assistant/messages", tooBig); r.status != 413 {
+		t.Fatalf("over 128 KB: %d", r.status)
+	}
+
+	ok := turn("2026-10-31", "q", "a")
+	for name, c := range map[string]struct {
+		body  map[string]any
+		field string
+	}{
+		"ten turns":         {withHistory("2026-10-31", "hi", append(full, ok)...), "history"},
+		"no date":           {withHistory("2026-10-31", "hi", map[string]any{"message": "q", "reply": "a"}), "history[0].date"},
+		"bad date":          {withHistory("2026-10-31", "hi", ok, turn("2026-02-30", "q", "a")), "history[1].date"},
+		"blank message":     {withHistory("2026-10-31", "hi", turn("2026-10-31", "  ", "a")), "history[0].message"},
+		"long reply":        {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", long(1001))), "history[0].reply"},
+		"two dishes":        {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", "a", "x", "y")), "history[0].recommendations"},
+		"long dish name":    {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", "a", "x", "y", long(81))), "history[0].recommendations[2].name"},
+		"blank description": {withHistory("2026-10-31", "hi", map[string]any{"date": "2026-10-31", "message": "q", "reply": "a", "recommendations": []map[string]string{{"name": "x", "description": " "}, {"name": "x", "description": "d"}, {"name": "x", "description": "d"}}}), "history[0].recommendations[0].description"},
+	} {
+		r := b.do("POST", "/api/assistant/messages", c.body)
+		var e struct {
+			Error struct {
+				Details []fieldError `json:"details"`
+			} `json:"error"`
+		}
+		r.json(t, &e)
+		if r.status != 422 || len(e.Error.Details) == 0 || e.Error.Details[0].Field != c.field {
+			t.Errorf("%s: %d %s", name, r.status, r.body)
+		}
+	}
+	if env.ai.calls() != calls {
+		t.Fatalf("rejected requests reached the AI service")
+	}
+}
+
+func TestIntegrationAssistantRateLimit(t *testing.T) {
+	db := testdb.New(t)
+	env := newAssistantEnv(t, db, DailyLimits{Normal: 30, Pro: 100, Site: 300})
+	alice := signUp(t, env.srv, "alice")
+	bob := signUp(t, env.srv, "bob")
+	send := func(b *browser) resp {
+		return b.do("POST", "/api/assistant/messages", message("2026-10-27", "吃什么"))
+	}
+
+	for i := range 6 {
+		if r := send(alice); r.status != 200 {
+			t.Fatalf("message %d: %d %s", i+1, r.status, r.body)
+		}
+	}
+	r := send(alice)
+	if r.status != 429 || r.errCode(t) != "rate_limited" || r.header.Get("Retry-After") == "" {
+		t.Fatalf("seventh message within a minute: %d %s", r.status, r.body)
+	}
+
+	// The refused message neither reached the AI service nor used the quota.
+	var used int
+	if err := db.SQL.QueryRow(`SELECT COALESCE(SUM(messages), 0) FROM assistant_usage`).Scan(&used); err != nil {
+		t.Fatal(err)
+	}
+	if env.ai.calls() != 6 || used != 6 {
+		t.Fatalf("after a refused message: %d calls, %d counted", env.ai.calls(), used)
+	}
+
+	// The limit is per user.
+	if r := send(bob); r.status != 200 {
+		t.Fatalf("another user: %d %s", r.status, r.body)
+	}
+}
+
 func TestIntegrationAgentInternalAPI(t *testing.T) {
-	env := newAssistantEnv(t, testdb.New(t), 30, 300)
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 30, Pro: 100, Site: 300})
 	alice := signUp(t, env.srv, "alice")
 	bob := signUp(t, env.srv, "bob")
 	alice.expect(201, "POST", "/api/meal-records", map[string]string{"date": "2026-10-03", "meal_type": "dinner", "content": "alice 的烤鱼"})
@@ -306,7 +502,7 @@ func TestIntegrationAgentInternalAPI(t *testing.T) {
 }
 
 func TestIntegrationAssistantQuotaConcurrent(t *testing.T) {
-	env := newAssistantEnv(t, testdb.New(t), 3, 300)
+	env := newAssistantEnv(t, testdb.New(t), DailyLimits{Normal: 3, Pro: 100, Site: 300})
 	b := signUp(t, env.srv, "racer")
 
 	var wg sync.WaitGroup
