@@ -7,7 +7,7 @@
 # - the AI service gets AWS credentials from the instance role, so nothing
 #   is mounted;
 # - every service restarts on failure and after a reboot.
-# - logs go to CloudWatch Logs (plans/observability.md).
+# - logs go to CloudWatch Logs (plans/archive/observability.md).
 # Each service gets only the variables it needs, not the whole .env.
 
 name: mogumogu

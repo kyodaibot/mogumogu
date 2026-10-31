@@ -2,7 +2,7 @@
 
 > 状态：**设计已确认（2026-10-23）**，见文末「设计决定」。实现中如需修改接口，先改本文件并经确认，再改代码。
 >
-> 本文件定义前端与 Go 后端之间的 HTTP 接口。业务背景见 [project-review.md](project-review.md)，阶段范围见 [plans/phase-2.md](../plans/phase-2.md)。
+> 本文件定义前端与 Go 后端之间的 HTTP 接口。业务背景见 [project-review.md](project-review.md)，阶段范围见 [plans/archive/phase-2.md](../plans/archive/phase-2.md)。
 > Go 与 Python AI 服务之间的内部接口在阶段 4 另行约定，不在本文件中。
 
 ## 1. 通用约定

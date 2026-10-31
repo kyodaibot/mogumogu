@@ -324,7 +324,7 @@ make seed-local    # 密码是 .env 中的 SEED_PASSWORD
 
 ### 6.10 账号等级
 
-账号等级（Normal、Pro，见 plans/account-tiers.md）只能用 `cmd/admin` 修改。它直接连接数据库，没有对应的 API，也没有管理页面，所以只有能登录服务器的人才能修改。修改后立即生效，用户不需要重新登录。
+账号等级（Normal、Pro，见 plans/archive/account-tiers.md）只能用 `cmd/admin` 修改。它直接连接数据库，没有对应的 API，也没有管理页面，所以只有能登录服务器的人才能修改。修改后立即生效，用户不需要重新登录。
 
 ```sh
 # 本地（作用于 .env 中的数据库）
