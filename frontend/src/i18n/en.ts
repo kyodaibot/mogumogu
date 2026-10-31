@@ -26,8 +26,8 @@ export const en = {
     profile: 'Profile',
     logout: 'Log out',
     loggingOut: 'Logging out…',
-    pro: 'Pro',
-    proTitle: 'Pro account',
+    tiers: { normal: 'Normal', pro: 'Pro' },
+    tierTitle: 'Account tier',
   },
   meals: {
     breakfast: 'Breakfast',

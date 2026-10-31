@@ -330,7 +330,7 @@ async function main() {
   await waitFor(`document.body.innerText.includes('E2E サラダチキン（大盛り）') && !document.querySelector('select')`, 'meal edited')
   check('meal edited', true)
 
-  check('a new account is normal: no Pro badge', !(await evaluate(`!!${q('.tier')}`)))
+  check('a new account shows the Normal tier', (await textOf('.account .tier')) === 'Normal', await textOf('.account .tier'))
   // Made Pro before the reload, which then shows the badge.
   setTier(username, 'pro')
 
@@ -341,7 +341,7 @@ async function main() {
   await waitFor(`!window.__beforeReload && document.querySelectorAll('.items button.link.danger').length >= 2 &&
     document.body.innerText.includes('E2E 夜間の実験') && document.body.innerText.includes('（大盛り）')`, 'data after reload')
   check('data still there after reload', true)
-  check('after the admin command makes the account Pro, the badge shows', (await textOf('.tier')) === 'Pro', await textOf('.tier'))
+  check('after the admin command makes the account Pro, the tier shows Pro', (await textOf('.account .tier')) === 'Pro', await textOf('.account .tier'))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
   check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
