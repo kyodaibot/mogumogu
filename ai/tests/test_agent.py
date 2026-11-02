@@ -2,9 +2,10 @@ import json
 from datetime import date
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from mogumogu_ai.agent import run_agent
+from mogumogu_ai.prompt import SYSTEM_PROMPT
 from mogumogu_ai.model import FakeModel, reply, tool_call
 
 from .conftest import FakeSource, make_request, turn
@@ -87,6 +88,33 @@ async def test_query_then_submit():
     # Meals keep their id (for update_meal and delete_meal); events do not.
     assert "焼き魚" in results[0].content and '"id":1' in results[0].content
     assert '"id"' not in results[1].content
+
+
+async def test_system_prompt_ends_with_cache_point():
+    _, model, _ = await run([reply(query()), reply(submit())])
+
+    # Every call starts with the same system message; the request's own
+    # content comes after its cache point.
+    for call in model.calls:
+        system = call["messages"][0]
+        assert isinstance(system, SystemMessage)
+        assert system.content[-1] == {"cachePoint": {"type": "default"}}
+        assert all(SYSTEM_PROMPT not in m.content for m in call["messages"][1:] if isinstance(m.content, str))
+
+
+async def test_cache_tokens_are_summed_over_calls():
+    # The first call writes the cache; the second reads it. Writes reported per
+    # TTL count as writes too.
+    per_ttl = reply(submit())
+    per_ttl.usage_metadata["input_token_details"] = {"cache_creation": 0, "cache_read": 0,
+                                                     "ephemeral_5m_input_tokens": 30}
+    outcome, _, _ = await run([reply(query(), input_tokens=100, cache_write=60), per_ttl])
+
+    assert outcome.input_tokens == 200
+    assert (outcome.cache_read_tokens, outcome.cache_write_tokens) == (0, 90)
+
+    outcome, _, _ = await run([reply(query(), cache_read=60), reply(submit(), cache_read=60)])
+    assert (outcome.cache_read_tokens, outcome.cache_write_tokens) == (120, 0)
 
 
 async def test_steps_used_up_goes_to_force_finish():

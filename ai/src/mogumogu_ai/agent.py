@@ -49,12 +49,22 @@ class Outcome:
     error: str | None
     steps: int
     retried: bool
+    # input_tokens counts every input token, cached ones included.
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     # Changes staged for a proposal (tools.Staging); empty without any.
     changes: list[dict] = field(default_factory=list)
     # Changes to memories (tools.MemoryChanges); empty without any.
     memory_changes: list[dict] = field(default_factory=list)
+
+
+def _cache_written(usage: dict) -> int:
+    # langchain-aws reports writes under cache_creation, or per TTL when
+    # Bedrock breaks them down (cache_creation is then 0).
+    details = usage.get("input_token_details", {})
+    return sum(details.get(k, 0) for k in ("cache_creation", "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"))
 
 
 def check_reply(args: dict, allergens: list[str]) -> SubmitReply | str:
@@ -82,6 +92,14 @@ def _answer_pending(last: AIMessage, text: str) -> list[AnyMessage]:
     return [ToolMessage(text, tool_call_id=call["id"]) for call in last.tool_calls]
 
 
+# The tool definitions and this prompt are the same for every request of a tier,
+# so Bedrock caches everything up to the cache point (5 minutes, renewed on each
+# hit). Anything that differs per request must stay after it, in the messages.
+# The cached prefix must be at least 4,096 tokens on Haiku 4.5, or nothing is
+# cached (no error).
+SYSTEM = SystemMessage([{"type": "text", "text": SYSTEM_PROMPT}, {"cachePoint": {"type": "default"}}])
+
+
 def build_graph(
     model: ChatModel, source: DataSource, allergens: list[str],
     staging: Staging | None = None, memories: MemoryChanges | None = None,
@@ -95,7 +113,7 @@ def build_graph(
     memory_answers: dict[str, str] = {}
 
     async def call_model(messages, force_tool=None) -> AIMessage:
-        return await model.ainvoke([SystemMessage(SYSTEM_PROMPT), *messages], tools_offered, force_tool)
+        return await model.ainvoke([SYSTEM, *messages], tools_offered, force_tool)
 
     async def agent(state: State):
         resp = await call_model(state["messages"])
@@ -233,6 +251,8 @@ async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> 
         retried=final["retried"],
         input_tokens=sum(u["input_tokens"] for u in usage),
         output_tokens=sum(u["output_tokens"] for u in usage),
+        cache_read_tokens=sum(u.get("input_token_details", {}).get("cache_read", 0) for u in usage),
+        cache_write_tokens=sum(_cache_written(u) for u in usage),
         changes=staging.changes if staging and final["result"] else [],
         memory_changes=memories.changes if memories and final["result"] else [],
     )

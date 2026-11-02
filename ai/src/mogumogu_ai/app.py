@@ -79,12 +79,14 @@ async def reply(req: ReplyRequest, request: Request):
 
     if outcome.result is None:
         _log(outcome.error, started, steps=outcome.steps, retried=outcome.retried,
-             input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens)
+             input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens,
+             cache_read_tokens=outcome.cache_read_tokens, cache_write_tokens=outcome.cache_write_tokens)
         return JSONResponse({"error": outcome.error}, status_code=503)
 
     _log("ok", started, steps=outcome.steps, retried=outcome.retried, changes=len(outcome.changes),
          memory_changes=len(outcome.memory_changes),
-         input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens)
+         input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens,
+         cache_read_tokens=outcome.cache_read_tokens, cache_write_tokens=outcome.cache_write_tokens)
     return Reply.model_construct(
         **dict(outcome.result), changes=outcome.changes, memory_changes=outcome.memory_changes
     )

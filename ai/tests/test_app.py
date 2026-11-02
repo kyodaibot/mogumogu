@@ -108,6 +108,7 @@ def test_log_has_steps_and_tokens_but_no_content(client, caplog):
 
     assert "result=ok" in caplog.text
     assert "steps=1" in caplog.text and "input_tokens=100" in caplog.text
+    assert "cache_read_tokens=0" in caplog.text and "cache_write_tokens=0" in caplog.text
     assert "秘密のメッセージ" not in caplog.text and "照り焼き" not in caplog.text
 
 
