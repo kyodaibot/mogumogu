@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse
 from .agent import Outcome, run_agent
 from .demo import demo_model
 from .model import ChatModel
-from .schemas import Reply, ReplyRequest
+from .schemas import Reply, ReplyRequest, Source
+from .search import FakeSearch, SearchProvider, TavilySearch
 from .time_budget import HARD_LIMIT_S, TimeBudget
 from .tools import GoClient
 
@@ -56,17 +57,38 @@ def make_model() -> ChatModel:
     raise RuntimeError(f"unsupported MODEL_PROVIDER: {provider}")
 
 
+def make_search() -> SearchProvider | None:
+    """None: web_search is not offered, even to Pro users."""
+    provider = os.environ.get("SEARCH_PROVIDER") or "off"
+    if provider == "off":
+        return None
+    if provider == "fake":
+        return FakeSearch()
+    if provider == "tavily":
+        key = os.environ.get("TAVILY_API_KEY")
+        if not key:
+            # A missing key turns search off rather than stopping the service.
+            log.warning("SEARCH_PROVIDER=tavily but TAVILY_API_KEY is empty; web search is off")
+            return None
+        return TavilySearch(key)
+    raise RuntimeError(f"unsupported SEARCH_PROVIDER: {provider}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if not hasattr(app.state, "model"):
         app.state.model = make_model()
-    log.info("model %s", type(app.state.model).__name__)
+    if not hasattr(app.state, "search"):
+        app.state.search = make_search()
+    log.info("model %s, search %s", type(app.state.model).__name__, type(app.state.search).__name__)
     base_url = os.environ.get("GO_INTERNAL_URL", "http://127.0.0.1:8081")
     # TimeBudget usually allows less; this bounds a query on its own.
     async with httpx.AsyncClient(base_url=base_url, timeout=5) as http:
         app.state.http = http
         yield
+    if app.state.search is not None:
+        await app.state.search.aclose()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -91,7 +113,7 @@ async def reply(req: ReplyRequest, request: Request):
     watcher = asyncio.create_task(_watch_disconnect(request, time_budget))
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
-            outcome = await run_agent(request.app.state.model, source, req, time_budget)
+            outcome = await run_agent(request.app.state.model, source, req, time_budget, request.app.state.search)
     except TimeoutError:
         _log("timeout", started)
         return JSONResponse({"error": "timeout"}, status_code=503)
@@ -106,9 +128,13 @@ async def reply(req: ReplyRequest, request: Request):
         _log(outcome.error, started, **_fields(outcome))
         return JSONResponse({"error": outcome.error}, status_code=503)
 
-    _log("ok", started, **_fields(outcome), changes=len(outcome.changes), memory_changes=len(outcome.memory_changes))
+    _log(
+        "ok", started, **_fields(outcome), changes=len(outcome.changes),
+        memory_changes=len(outcome.memory_changes), sources=len(outcome.sources),
+    )
     return Reply.model_construct(
-        **dict(outcome.result), changes=outcome.changes, memory_changes=outcome.memory_changes
+        **{**dict(outcome.result), "sources": [Source(**src) for src in outcome.sources]},
+        changes=outcome.changes, memory_changes=outcome.memory_changes,
     )
 
 
@@ -117,6 +143,7 @@ def _fields(o: Outcome) -> dict:
         "finish": o.finish, "model_calls": o.counts.model_calls, "retried": o.retried,
         "model_timeouts": o.counts.model_timeouts, "model_retries": o.counts.model_retries,
         "go_timeouts": o.counts.go_timeouts,
+        "searches": o.counts.searches, "search_errors": o.counts.search_errors,
         "input_tokens": o.input_tokens, "output_tokens": o.output_tokens,
         "cache_read_tokens": o.cache_read_tokens, "cache_write_tokens": o.cache_write_tokens,
     }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +134,51 @@ type assistantReplyJSON struct {
 	Proposal *proposalJSON `json:"proposal"`
 	// The memories the assistant saved with this reply; empty without any.
 	MemoryUpdates []memoryUpdateJSON `json:"memory_updates"`
+	// The web pages the reply cites; empty without any.
+	Sources []sourceJSON `json:"sources"`
+}
+
+type sourceJSON struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+const (
+	maxSources          = 5
+	maxSourceURLBytes   = 2048
+	maxSourceTitleRunes = 200
+)
+
+// checkSources keeps the sources the browser may show as links: http and
+// https URLs only (never javascript: or data:), at most maxSources. The rest
+// are dropped and logged; the reply itself is still returned.
+func (a *api) checkSources(user store.User, sources []assistant.Source) []sourceJSON {
+	out := []sourceJSON{}
+	if len(sources) == 0 {
+		return out
+	}
+	if user.Tier != store.TierPro {
+		a.logger.Warn("sources ignored", slog.Int64("user_id", user.ID), slog.String("reason", "not_pro"))
+		return out
+	}
+	dropped := 0
+	for _, s := range sources {
+		u, err := url.Parse(s.URL)
+		if len(out) == maxSources || len(s.URL) > maxSourceURLBytes || err != nil ||
+			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			dropped++
+			continue
+		}
+		title := []rune(strings.TrimSpace(s.Title))
+		if len(title) > maxSourceTitleRunes {
+			title = title[:maxSourceTitleRunes]
+		}
+		out = append(out, sourceJSON{Title: string(title), URL: s.URL})
+	}
+	if dropped > 0 {
+		a.logger.Warn("sources dropped", slog.Int64("user_id", user.ID), slog.Int("count", dropped))
+	}
+	return out
 }
 
 // postAssistantMessage answers one message to the meal assistant
@@ -222,7 +268,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, assistantReplyJSON{
 		Reply: reply.Reply, Recommendations: reply.Recommendations,
 		AskMealType: reply.AskMealType, MealType: reply.MealType, Proposal: proposal,
-		MemoryUpdates: updates,
+		MemoryUpdates: updates, Sources: a.checkSources(user, reply.Sources),
 	})
 }
 
@@ -292,6 +338,8 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 			AllowProposal: pro,
 			// Checked again when the reply comes back.
 			AllowMemory: pro,
+			// Checked again when the reply comes back (its sources).
+			AllowSearch: pro,
 			Memories:    memoryItems,
 			Profile:     profile,
 			Events:      eventItems,

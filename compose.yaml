@@ -98,6 +98,8 @@ services:
       AWS_PROFILE: ${AWS_PROFILE:-default}
       AWS_REGION: ap-northeast-1
       GO_INTERNAL_URL: http://backend:8081
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     # Temporary credentials from `aws login` on your machine; nothing is copied
     # into the image. The login cache must be writable: botocore saves the
     # refreshed token there every 15 minutes or so.

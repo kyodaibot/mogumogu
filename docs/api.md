@@ -496,7 +496,8 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
   ],
   "ask_meal_type": false,
   "proposal": null,
-  "memory_updates": []
+  "memory_updates": [],
+  "sources": []
 }
 ```
 
@@ -545,6 +546,16 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
   - `content`：新增和修改是保存后的内容，删除是被删的内容；`before` 只在修改时有，是修改前的内容。
   - Go 写入前按 10 的规则再检查每一项，并检查等级、修改和删除的记忆在这条消息的上下文中（属于这个用户），以及从读取上下文到写入之间没有被改过（乐观锁，比较 `updated_at`）。不通过的项跳过、记入日志（不含内容），其余照常写入，回复照常返回。消息返回 `503` 时什么都不写入。
+- `sources`：来源（GLOSSARY），即回复引用的网页。只有 Pro 用户、且饮食助手搜索了网络并用到了结果时才有内容，否则为空数组。前端在回复下方显示为链接。
+
+  ```json
+  [
+    { "title": "生協食堂メニュー情報 | 食生活支援", "url": "https://www.s-coop.net/service/food/menu_info" }
+  ]
+  ```
+
+  - `url`：AI 服务只接受这条消息的搜索结果中实际出现的 URL；`title` 由 AI 服务从搜索结果中填写，不是模型写的，可能为空字符串（前端改为显示域名）。
+  - Go 再检查一次：只保留 `http` 或 `https`、带主机名、不超过 2048 字节的 URL，最多 5 个；标题截断到 200 个字符。不合格的项丢掉、记入日志，回复照常返回。Normal 用户的回复不带来源。
 
 错误：`401`、`403`、`413`（超过 128 KB）、`422`（`date`、`message`、`locale` 或 `history` 不合规则）、`429 rate_limited`（每分钟限流）、`429 quota_exceeded`（调用额度用完）、`503 ai_unavailable`。
 

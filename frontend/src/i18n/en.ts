@@ -175,6 +175,8 @@ export const en = {
     turnLimit: (max: number) => `This chat has reached ${max} messages. Start a new chat to keep going.`,
     addToLog: 'Add to meal log',
     added: 'Added ✓',
+    /** The links under a reply to the web pages it cites (Pro). */
+    sources: 'Sources',
     /** The line under a reply that saved or forgot memories (Pro). */
     memoryNote: {
       updated: 'Memory updated',
