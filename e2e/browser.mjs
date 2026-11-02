@@ -257,6 +257,16 @@ async function main() {
     asks[2].history.length === 2 && asks[2].history[1].message === 'その日は何を食べたらいい？' && !('reason' in asks[1].history[0].recommendations[0]),
     asks.map((a) => a.history.length).join(' / '))
 
+  // The conversation is kept in this tab: after a reload the panel starts
+  // closed and shows it again, and the next message carries it as history.
+  await evaluate('window.__beforeReload = true')
+  await send('Page.reload')
+  await waitFor(`!window.__beforeReload && !!document.querySelector('.fab')`, 'calendar after reload')
+  check('after a reload the panel starts closed', !(await evaluate(`!!${q('.panel')}`)))
+  await click('.fab')
+  await waitFor(`document.querySelectorAll('.panel .bubble.user').length === 3`, 'conversation after reload')
+  check('after a reload the conversation is still there', (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 6)
+
   // A follow-up only makes sense with the history: the fake model names the
   // earlier recommendation it builds on.
   await fill('#assistant-input', 'ご飯なしで')
@@ -344,7 +354,7 @@ async function main() {
   check('after the admin command makes the account Pro, the tier shows Pro', (await textOf('.account .tier')) === 'Pro', await textOf('.account .tier'))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
-  check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
+  check('a new chat stays empty after a reload', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
 
   // Pro: the assistant proposes a record; nothing is saved until it runs. A
   // preference in the same message is saved at once, with a note under the
@@ -400,6 +410,14 @@ async function main() {
   check('memories can be added and edited on the Profile page',
     (await evaluate(memories)).join() === '白身魚が好き' && (await textOf('#memories .count')) === '1 / 30')
 
+  // Back on the calendar, the conversation from before is still there.
+  await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='カレンダー').click()`)
+  await waitFor(`location.pathname === '/' && !!document.querySelector('.fab')`, 'calendar again')
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel .memory-note')`, 'conversation after visiting the profile')
+  check('leaving the calendar keeps the conversation', (await textOf('.panel .bubble.user')).includes('ラーメン'))
+  await click('.panel .close')
+
   // CSRF: every write after registration used the session token, none failed.
   const writes = requests.filter((r) => r.method !== 'GET')
   const afterLogin = writes.filter((r) => !r.url.startsWith('/api/auth/register'))
@@ -441,7 +459,7 @@ async function main() {
   const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
   check('an English question asks for, and gets, an English reply',
     JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
-  check('the first message of a new chat has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
+  check('logging out ends the conversation: the next message has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.day.today')`, 'calendar after reload')

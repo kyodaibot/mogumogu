@@ -155,6 +155,7 @@ export const en = {
     limitReached: 'You have used up today’s questions. Come back tomorrow.',
     ownLimitReached: (limit: number) => `You have reached today’s limit of ${limit} questions. Come back tomorrow.`,
     tooFast: 'Too many messages in a short time. Wait a moment, then retry.',
+    interrupted: 'You left the page before the answer came. Please send it again.',
     unavailable: 'The meal assistant could not answer this time. Please retry.',
     tooLong: (max: number) => `Messages can be up to ${max} characters.`,
     /** How a target date reads inside a question. */
