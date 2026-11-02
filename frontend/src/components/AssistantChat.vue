@@ -1,42 +1,35 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ApiError, api, type AssistantReply, type MealRecordInput, type Recommendation } from '../api'
+import { ApiError, api, type MealRecordInput, type Recommendation } from '../api'
 import { MAX_TURNS, historyOf, mealQuestions, presetQuestions, quotaText } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
-import { newProposalState, type ProposalState } from '../lib/proposals'
+import { newProposalState } from '../lib/proposals'
+import { loadChat, saveChat, type ChatTurn } from '../lib/chatStore'
+import { session } from '../session'
 import { locale, t } from '../i18n'
 import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
 import ProposalCard from './ProposalCard.vue'
+import MemoryNote from './MemoryNote.vue'
+import SourceList from './SourceList.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
-// chat panel. The conversation lives only in this component, so closing the
-// panel keeps it and reloading the page starts a new one. Every message is
-// sent with the answered turns before it, so the assistant can follow up.
+// chat panel. The conversation is kept in this tab (lib/chatStore), so
+// closing the panel, reloading or visiting another page keeps it; closing the
+// tab ends it. Every message is sent with the answered turns before it, so
+// the assistant can follow up.
 const props = defineProps<{ date: Ymd; today: Ymd }>()
 // Meal records were added or changed from the chat; the calendar reloads.
 const emit = defineEmits<{ 'meals-changed': [] }>()
 
 const MAX_LENGTH = 500
 
-interface Turn {
-  id: number
-  /** The target date this message was sent for. */
-  date: Ymd
-  text: string
-  status: 'pending' | 'done' | 'failed'
-  reply?: AssistantReply
-  error?: string
-  retryable?: boolean
-  /** Indexes of recommendations already added to the meal log. */
-  added?: number[]
-  /** The state of the reply's change proposal card, if it has one. */
-  proposal?: ProposalState
-}
-
 const open = ref(false)
-const turns = ref<Turn[]>([])
+// The page is only shown to a logged-in user.
+const userId = session.state.user!.id
+const saved = loadChat(userId)
+const turns = ref<ChatTurn[]>(saved.turns)
 const draft = ref('')
 const busy = computed(() => turns.value.some((t) => t.status === 'pending'))
 // Ten answered messages end a conversation; the user starts a new one.
@@ -48,14 +41,15 @@ const scroller = ref<HTMLElement>()
 
 const presets = computed(() => presetQuestions(props.date, props.today))
 
-let nextId = 1
+let nextId = saved.nextId
+watch(turns, (v) => saveChat(userId, { turns: v, nextId }), { deep: true })
 
 // The recommendation whose meal form is open; one at a time.
 const adding = ref<{ turn: number; index: number } | null>(null)
 
 // A recommendation becomes a new meal record on the turn's target date, with
 // the serving estimate as its nutrition. The user checks it before saving.
-function draftFor(turn: Turn, r: Recommendation): MealRecordInput {
+function draftFor(turn: ChatTurn, r: Recommendation): MealRecordInput {
   return {
     date: turn.date,
     meal_type: turn.reply?.meal_type ?? 'lunch',
@@ -64,13 +58,13 @@ function draftFor(turn: Turn, r: Recommendation): MealRecordInput {
   }
 }
 
-async function openMealForm(turn: Turn, index: number) {
+async function openMealForm(turn: ChatTurn, index: number) {
   adding.value = { turn: turn.id, index }
   await nextTick()
   scroller.value?.querySelector('.rec form')?.scrollIntoView({ block: 'nearest' })
 }
 
-function mealAdded(turn: Turn, index: number) {
+function mealAdded(turn: ChatTurn, index: number) {
   turn.added = [...(turn.added ?? []), index]
   adding.value = null
   emit('meals-changed')
@@ -97,7 +91,7 @@ async function closePanel() {
 function send(text: string, date: Ymd = props.date): boolean {
   text = text.trim()
   if (!text || busy.value || full.value) return false
-  turns.value.push({ id: nextId++, date, text, status: 'pending' })
+  turns.value.push({ id: nextId++, date, text, status: 'pending', undone: [] })
   // Work on the reactive copy, so updates to it re-render.
   void ask(turns.value[turns.value.length - 1])
   return true
@@ -107,7 +101,7 @@ function sendDraft() {
   if (send(draft.value)) draft.value = ''
 }
 
-async function ask(turn: Turn) {
+async function ask(turn: ChatTurn) {
   // Only the last turn is ever sent or retried, so the turns before it are
   // the history.
   const history = historyOf(turns.value.slice(0, turns.value.findIndex((t) => t.id === turn.id)))
@@ -132,7 +126,8 @@ function failureText(err: unknown): string {
     const a = t.value.assistant
     if (err.code === 'quota_exceeded') return quotaText(err.limit)
     if (err.code === 'rate_limited') return a.tooFast
-    if (err.code === 'ai_unavailable') return a.unavailable
+    // timeout: no answer within ASSISTANT_TIMEOUT_MS, so the connection was lost.
+    if (err.code === 'ai_unavailable' || err.code === 'timeout') return a.unavailable
     if (err.code === 'validation_failed') return a.tooLong(MAX_LENGTH)
   }
   return errorMessage(err)
@@ -278,6 +273,8 @@ watch(
             :today="today"
             @executed="emit('meals-changed')"
           />
+          <SourceList v-if="turn.reply.sources?.length" :sources="turn.reply.sources" />
+          <MemoryNote v-if="turn.reply.memory_updates?.length" :updates="turn.reply.memory_updates" :undone="turn.undone" />
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
             <li v-for="q in mealQuestions(turn.date, today)" :key="q">
               <button type="button" class="chip" :disabled="busy || full" @click="send(q, turn.date)">{{ q }}</button>

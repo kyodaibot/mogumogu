@@ -105,6 +105,34 @@ export interface AssistantReply {
   meal_type: MealType | null
   /** Changes to the meal log the assistant proposes (Pro); null without any. */
   proposal: Proposal | null
+  /** Memories the assistant saved with this reply (Pro); empty without any. */
+  memory_updates: MemoryUpdate[]
+  /** Web pages the reply cites (Pro); empty without any. Missing in replies
+   *  saved in the chat before sources existed. */
+  sources?: Source[]
+}
+
+/** A web page a reply cites (GLOSSARY: 来源). title may be empty. */
+export interface Source {
+  title: string
+  url: string
+}
+
+/** A memory (GLOSSARY: 记忆): a lasting preference the assistant keeps in mind. */
+export interface Memory {
+  id: number
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+/** One memory the assistant changed. content is the memory after a create or
+ *  update, and the one removed by a delete; before is what an update replaced. */
+export interface MemoryUpdate {
+  op: ChangeOp
+  id: number
+  content: string
+  before: string | null
 }
 
 export type ChangeOp = 'create' | 'update' | 'delete'
@@ -152,6 +180,11 @@ export interface HistoryTurn {
   changes: HistoryChange[]
 }
 
+/** Longer than the backend's own limit (35 s), so its answer, even an
+ *  error, always arrives first; this only catches a lost connection
+ *  (docs/operations.md 6.11). */
+export const ASSISTANT_TIMEOUT_MS = 45_000
+
 let unauthorizedHandler: () => void = () => {}
 
 /** Registers what to do when the session turns out to be invalid. */
@@ -188,10 +221,17 @@ export const api = {
   updateMeal: (id: number, m: MealRecordInput) => req<MealRecord>('PUT', `/api/meal-records/${id}`, m),
   deleteMeal: (id: number) => req<void>('DELETE', `/api/meal-records/${id}`),
 
+  listMemories: () => req<{ items: Memory[] }>('GET', '/api/memories').then((r) => r.items),
+  createMemory: (content: string) => req<Memory>('POST', '/api/memories', { content }),
+  updateMemory: (id: number, content: string) => req<Memory>('PUT', `/api/memories/${id}`, { content }),
+  deleteMemory: (id: number) => req<void>('DELETE', `/api/memories/${id}`),
+
   /** `locale` is the interface language; the reply is written in it.
    *  `history` is the conversation so far, oldest first. */
   sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en', history: HistoryTurn[]) =>
-    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }),
+    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }, {
+      timeoutMs: ASSISTANT_TIMEOUT_MS,
+    }),
   /** Runs the changes at the indexes in `accepted`; the rest are skipped. */
   executeProposal: (id: number, accepted: number[]) =>
     req<{ results: ChangeResult[] }>('POST', `/api/assistant/proposals/${id}/execute`, { accepted }).then((r) => r.results),

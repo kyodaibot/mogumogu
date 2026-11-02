@@ -25,11 +25,13 @@ class ChatModel(Protocol):
         messages: Sequence[BaseMessage],
         tools: Sequence[ToolSpec],
         force_tool: str | None = None,
+        may_retry: Callable[[], bool] = lambda: False,
     ) -> AIMessage:
         """Call the model once.
 
         The model must answer with tool calls. force_tool, when set, names the
-        only tool it may call this time.
+        only tool it may call this time. After throttling or a dropped
+        connection it may try once more if may_retry() says there is time.
         """
         ...
 
@@ -44,7 +46,9 @@ def tool_call(name: str, **args) -> dict:
     return {"name": name, "args": args, "id": f"call_{next(_ids)}", "type": "tool_call"}
 
 
-def reply(*calls: dict, input_tokens: int = 100, output_tokens: int = 20) -> AIMessage:
+def reply(
+    *calls: dict, input_tokens: int = 100, output_tokens: int = 20, cache_read: int = 0, cache_write: int = 0
+) -> AIMessage:
     """An AIMessage that makes the given tool calls, with made-up token usage."""
     return AIMessage(
         content="",
@@ -53,6 +57,7 @@ def reply(*calls: dict, input_tokens: int = 100, output_tokens: int = 20) -> AIM
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
+            "input_token_details": {"cache_read": cache_read, "cache_creation": cache_write},
         },
     )
 
@@ -67,7 +72,7 @@ class FakeModel:
         self.script = list(script)
         self.calls: list[dict] = []
 
-    async def ainvoke(self, messages, tools, force_tool=None) -> AIMessage:
+    async def ainvoke(self, messages, tools, force_tool=None, may_retry=lambda: False) -> AIMessage:
         self.calls.append({"messages": list(messages), "tools": list(tools), "force_tool": force_tool})
         if len(self.calls) > len(self.script):
             raise AssertionError(f"FakeModel called {len(self.calls)} times; script has {len(self.script)} steps")

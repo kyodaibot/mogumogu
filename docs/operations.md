@@ -120,7 +120,7 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 
 ## 6. 云上部署（AWS）
 
-线上地址：https://mogumogu.teiyou416.ninja 。设计和取舍见 [plans/phase-5.md](../plans/phase-5.md)。
+线上地址：https://mogumogu.teiyou416.ninja 。设计和取舍见 [plans/archive/phase-5.md](../plans/archive/phase-5.md)。
 
 ### 6.1 组成
 
@@ -130,7 +130,8 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 | 容器 | Caddy（HTTPS 证书自动申请和续期）→ Nginx → 后端 / AI 服务；`migrate` 每次部署先执行一次 | `deploy/compose.yaml`、`deploy/Caddyfile` |
 | 数据库 | RDS PostgreSQL 17，私有子网，只允许服务器访问，强制 TLS；每天自动备份，保留 7 天 | `infra/main/database.tf` |
 | 镜像 | ECR 的 `mogumogu/{backend,web,ai}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
-| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、`infra/main/settings.tf` |
+| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥和 Tavily 的 API Key 是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、6.12、`infra/main/settings.tf` |
+| 外部服务 | Tavily（网络搜索，只发送搜索关键词），免费额度，不绑卡（6.12） | `deploy/compose.yaml` |
 | 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶、向日志组写入日志。**没有任何长期 Access Key** | `infra/main/iam.tf` |
 | 日志和告警 | 所有容器的日志写入 CloudWatch Logs `/mogumogu/app`，保留 14 天；访客收到 5xx 时发邮件（6.6） | `infra/main/logs.tf`、`deploy/compose.yaml` |
 | 费用告警 | AWS Budgets，每月 50 美元，超过 50%、75%、100% 和预测超过 100% 时发邮件 | `infra/main/budgets.tf` |
@@ -142,7 +143,7 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 只需要做一次，按顺序执行。环境被删除后重建时也按这个顺序：
 
 1. **状态桶**：`cd infra/bootstrap && AWS_PROFILE=Teiyou terraform init && AWS_PROFILE=Teiyou terraform apply`。它的状态文件留在本地，不提交。
-2. **密钥**：`AWS_PROFILE=Teiyou scripts/put-secrets.sh`。数据库密码也在其中，必须在第 3 步之前创建。
+2. **密钥**：`AWS_PROFILE=Teiyou scripts/put-secrets.sh`。数据库密码也在其中，必须在第 3 步之前创建。另外按 6.12 创建 Tavily 的 API Key，否则 `deploy.sh` 读不到这个参数，部署会失败。
 3. **其余资源**：把 `infra/main/terraform.tfvars.example` 复制为 `terraform.tfvars`（已被 gitignore），填上收告警的邮箱，然后在 `infra/main` 里执行 `terraform init` 和 `terraform apply`。最后会输出公网 IP。
 4. **DNS**：在 name.com 添加 A 记录 `mogumogu` → 公网 IP。生效后 Caddy 才能申请到证书。
 5. **发布**：按 6.3 执行 `make push` 和 `make deploy`。
@@ -193,7 +194,8 @@ AWS_PROFILE=Teiyou make deploy TAG=<之前的提交号>
 ECR 只保留最近 10 个镜像，更早的版本需要先切换到那个提交，再执行 `make push`。
 
 **数据库只向前迁移。** 旧版本的 `migrate` 不认识比它新的迁移版本，会报错退出（golang-migrate 找不到当前版本的迁移文件）。这样部署会失败，而不会让旧代码去读写新的表结构。因此：
-- 回滚的目标版本不能早于最近一次迁移。目前线上是版本 6，阶段 5 及以后的提交都可以互相回滚。
+- 回滚的目标版本不能早于最近一次迁移：目标提交必须已经包含线上数据库的最新迁移（`backend/migrations/` 中编号最大的文件）。例如 000009（记忆）上线后，只能回滚到包含 000009 的提交。
+- 回滚没有在线上演练过（阶段 5 决定不做，见 plans/archive/phase-5.md 的完成报告）。
 - 新迁移应只做向后兼容的修改（例如只新增表和列）。需要撤销一次迁移时，写一个新的迁移，然后向前发布。
 - 数据本身出问题时，从 RDS 的自动备份恢复到某个时间点。恢复会生成一个新的实例，需要修改 Terraform 指向它，详见里程碑 4 的恢复演练。
 
@@ -213,7 +215,16 @@ AWS_PROFILE=Teiyou aws ssm start-session --region ap-northeast-1 \
 所有容器的日志都写入 CloudWatch Logs 的日志组 `/mogumogu/app`，保留 14 天（`infra/main/logs.tf`）。每个容器一个日志流，名字是「容器名/容器 ID」，例如 `mogumogu-web-1/3f2a…`。几种日志的格式：
 - **web（nginx）**：每个请求一行 JSON，字段为 `time`、`remote_addr`（客户端 IP）、`method`、`path`（不含查询参数）、`status`、`duration_s`。只有这种日志带 `remote_addr`，统计访问量时用它来筛选。
 - **backend**：slog 输出的 JSON，请求日志的 `msg` 为 `request`，字段为 `method`、`path`、`status`、`duration_ms`；错误日志的 `level` 为 `ERROR` 或 `WARN`。
-- **ai、caddy、migrate**：普通文本或各自的 JSON。
+- **ai**：每条消息一行 JSON，`msg` 为 `reply`。不记录消息内容、模型输出和搜索关键词。字段：
+  - `result`：`ok`、`invalid_output`（校验不通过）、`timeout`、`disconnected`（Go 已经断开）、`recursion_limit`、`error`（调用 Bedrock 或 Go 时出了异常，另有 `exc` 字段，只记异常类型）。除 `ok` 外都返回 503，Go 再返回 `503 ai_unavailable`。
+  - `finish`：最后一次提交是怎么来的。`submitted` 为模型自己提交；`max_calls`（可调用工具的 4 次用完）、`soft_deadline`（工具阶段的时间用完）、`no_tool_call`（模型没有调用工具）为被强制提交；`deadline_invalid` 为强制提交后校验不通过、又没有时间重试（返回 503）。
+  - `ms`、`model_calls`（这条消息调用模型的总次数，含强制提交和校验重试）、`retried`（是否做过校验重试）。
+  - `model_timeouts`、`model_retries`（限流或断线后的重试）、`go_timeouts`（查询饮食记录或日程超时）。
+  - `input_tokens`（包括缓存部分）、`output_tokens`、`cache_read_tokens`、`cache_write_tokens`。`cache_read_tokens` 为 0 而 `cache_write_tokens` 不为 0，说明这次写入了缓存（之前 5 分钟内没有同等级的请求）。
+  - `searches`（发给搜索服务的次数，含失败的）、`search_errors`（失败次数，含超时）。
+  - 成功时还有 `changes`、`memory_changes`、`sources`（条数）。
+  - 搜索失败时另有一行普通文本的 WARN 日志 `web search failed: <原因>`，原因是 HTTP 状态码（如 `432` 为免费额度用完）、`timeout` 或异常类型，不含关键词。
+- **caddy、migrate**：普通文本或各自的 JSON。
 
 **在终端实时查看：**
 
@@ -258,6 +269,32 @@ filter ispresent(remote_addr) and duration_s > 1
 # 饮食助手每天的调用次数，按状态码分开（429 = 额度用完，503 = AI 服务失败）
 filter ispresent(remote_addr) and method = "POST" and path = "/api/assistant/messages"
 | stats count(*) as calls by bin(1d), status
+
+# AI 服务每天的结果和结束方式（finish 不是 submitted 的都是被强制提交或失败）
+filter msg = "reply"
+| stats count(*) as replies by bin(1d), result, finish
+
+# 被强制提交的比例：这些消息返回 200，5xx 告警看不到（6.11）
+filter msg = "reply" and result = "ok"
+| fields 1 - strcontains(finish, "submitted") as forced
+| stats avg(forced) * 100 as forced_pct, count(*) as replies by bin(1d)
+
+# 超时率、平均模型调用次数、超时和重试的次数
+filter msg = "reply"
+| fields strcontains(result, "timeout") as timed_out
+| stats avg(timed_out) * 100 as timeout_pct, avg(model_calls) as calls_per_message,
+    sum(model_timeouts) as model_timeouts, sum(model_retries) as model_retries, sum(go_timeouts) as go_timeouts
+    by bin(1d)
+
+# 网络搜索：每天的搜索次数、失败次数、带来源的回复数
+filter msg = "reply"
+| stats sum(searches) as searches, sum(search_errors) as search_errors, sum(sources > 0) as with_sources
+    by bin(1d)
+
+# 搜索失败的原因
+filter @message like /web search failed/
+| parse @message "web search failed: *" as reason
+| stats count(*) by reason
 ```
 
 查询按扫描的数据量收费，以现在的日志量每次不到 0.01 美元。
@@ -267,7 +304,7 @@ filter ispresent(remote_addr) and method = "POST" and path = "/api/assistant/mes
 2. 用「后端的错误和警告」，或者 `--log-stream-name-prefix mogumogu-ai` 查看同一时间的日志；
 3. 如果是部署后才出现的问题，考虑回滚（6.4）。
 
-服务器整台宕机时不会产生日志，这个告警也不会触发。
+服务器整台宕机时不会产生日志，这个告警也不会触发。饮食助手被强制提交（`finish` 为 `max_calls`、`soft_deadline`、`no_tool_call`）时返回 200，也不会触发，用上面「被强制提交的比例」查看。
 
 **在服务器上查看：** CloudWatch 不可用时，也可以登录服务器（6.5）查看 Docker 在本地保留的副本：
 
@@ -292,6 +329,7 @@ make deploy TAG=<线上当前的提交号>
 ```
 
 - 更换 `jwt_secret` 后，所有人都需要重新登录。更换 `csrf_secret` 后，页面需要刷新一次。
+- Tavily 的 API Key 不由 `put-secrets.sh` 生成，更换方法见 6.12。
 - **数据库密码**还需要同步修改 RDS：在删除并重新生成 `/mogumogu/db_password` 之后，把 `infra/main/database.tf` 中的 `password_wo_version` 加 1，然后执行 `terraform apply`，最后 `make deploy`。在 apply 和 deploy 之间，后端连不上数据库，网站会短暂不可用。
 
 ### 6.8 演示账号
@@ -341,6 +379,55 @@ docker compose run --rm migrate /admin tier <username> pro     # 或 normal
 - 线上借用 `migrate` 服务运行，因为它用的是同一个 backend 镜像，并且已经有数据库的连接设置；`/admin` 替换了它原来的 `/migrate up` 命令，不会执行迁移。
 - 输出同样会写入 CloudWatch Logs（日志流 `mogumogu-migrate-run-…`），其中包含用户名。
 - 不要把演示账号设为 Pro：它的密码是公开的，任何人都能用它把全站当天的额度用完。
+
+### 6.11 超时层级
+
+饮食助手的一条消息经过多层，超时**从里到外逐层变大**：里层超时后还要留时间返回降级结果或明确的错误，外层不能先把连接断掉。改动任何一层时，都要保持这个顺序。
+
+| 层 | 上限 | 超时后 | 位置 |
+|---|---|---|---|
+| 查询饮食记录和日程 | 5 秒 | 告诉模型「查询超时」，模型不用它回答 | `ai/src/mogumogu_ai/time_budget.py`、`app.py` |
+| 网络搜索（Tavily） | 8 秒，不重试 | 告诉模型「现在无法搜索」，本条消息不再搜索 | `time_budget.py`、`search.py` |
+| 单次模型调用 | 连接 3 秒，响应 15 秒；限流或断线时由我们的代码重试 1 次（boto 自己不重试） | 见下面的软上限和硬上限 | `time_budget.py`、`bedrock.py` |
+| AI 服务：软上限 | 20 秒 | 不再调用工具，强制模型用已有信息提交（`finish=soft_deadline`） | `time_budget.py` |
+| AI 服务：硬上限 | 30 秒（另有 31 秒的保险） | 返回 503 `timeout`；强制提交后校验不通过、剩余不到 8 秒时返回 `invalid_output`（`finish=deadline_invalid`） | `time_budget.py`、`app.py` |
+| Go 调用 AI 服务 | 35 秒 | 返回 `503 ai_unavailable`，退还额度 | `backend/internal/assistant/client.go` |
+| Nginx | 60 秒（默认，没有配置） | 504 | `frontend/nginx.conf` |
+| Caddy | 不限（默认） | — | `deploy/Caddyfile` |
+| 前端（只限饮食助手的消息） | 45 秒 | 显示「没能回答」，可以重试 | `frontend/src/api/index.ts` |
+
+AI 服务内部的每次调用都先向 `TimeBudget.timeout_for(kind)` 要时间，其他代码不自己判断时间：
+- 软上限之前：普通模型调用最多 min(15 秒, 剩到软上限)，剩不到 3 秒就不再发起，直接强制提交；工具调用最多 min(自己的上限, 剩到软上限)，剩不到 1 秒就不执行，并告诉模型「时间已用完」。
+- 软上限之后：只允许强制提交和校验重试，最多 min(15 秒, 剩到硬上限)，剩不到 8 秒（生成三个推荐实测约 5.5 秒）就不再发起。
+- Go 断开请求（浏览器关闭页面、刷新等）后，AI 服务不再发起新的调用，日志记 `result=disconnected`。
+
+两个限制：
+- langchain-aws 在线程里运行同步的 boto 调用。AI 服务放弃等待后，线程还会继续，最多到 boto 的 15 秒读取超时，Bedrock 那边多半照样计费。默认线程池有 min(32, CPU 数 + 4) 个线程，t4g.micro（2 vCPU）上是 6 个，即最多同时进行 6 次模型调用，超出的排队，排队时间也计入上面的时间。
+- 没有幂等的消息 ID：Go 已经保存了提案或记忆、正在写回响应时连接断开的话，用户重试会多出一张提案卡片并多扣一次额度（记忆有唯一约束，不会重复）。
+
+### 6.12 网络搜索（Tavily）
+
+Pro 用户的饮食助手可以搜索网络（project-review 3.6）。搜索服务是 Tavily，只把模型写出的搜索关键词发过去，不发送 Profile、过敏原、记忆和记录。
+
+**注册和创建 Key（一次）：** 在 tavily.com 注册免费账号，**不绑定信用卡**：免费额度每月 1,000 credit，基本搜索每次 1 credit；没有卡就不会产生费用。在控制台创建 API Key，然后在自己的终端存入 SSM（不显示在屏幕上，不留在 shell 历史和 `ps` 中）：
+
+```zsh
+read -rs "k?Tavily key: "; echo
+umask 077; f=$(mktemp)
+printf '{"Name":"/mogumogu/tavily_api_key","Type":"SecureString","Value":"%s","Tags":[{"Key":"Project","Value":"mogumogu"}]}' "$k" > "$f"
+AWS_PROFILE=Teiyou aws ssm put-parameter --region ap-northeast-1 --cli-input-json "file://$f" >/dev/null && echo created
+rm -f "$f"; unset k
+# 确认（只显示名字和类型）
+AWS_PROFILE=Teiyou aws ssm get-parameter --region ap-northeast-1 --name /mogumogu/tavily_api_key --query 'Parameter.[Name,Type]' --output text
+```
+
+`deploy.sh` 每次部署时把它读进服务器的 `.env`，`deploy/compose.yaml` 中 `SEARCH_PROVIDER: tavily`。不需要改 Terraform：服务器的角色可以读 `/mogumogu/*`，安全组允许出站。
+
+**更换 Key：** 在 Tavily 控制台新建 Key，把上面 `put-parameter` 的参数加上 `"Overwrite":true` 再执行一次，然后 `make deploy TAG=<线上当前的提交号>`，最后在 Tavily 删除旧 Key。
+
+**本地开发：** `.env` 中 `SEARCH_PROVIDER` 不设置或为 `off` 时不搜索；设为 `tavily` 并填上自己的 `TAVILY_API_KEY` 才会真的搜索（会用掉免费额度）；`fake` 返回固定结果，不联网。`SEARCH_PROVIDER=tavily` 而 Key 为空时，AI 服务记一条警告并关闭搜索，照常启动。`make ai-eval` 中标为 web 的用例使用真实搜索，每次运行约用 3 credit，没有 Key 时跳过。
+
+**额度用完时：** Tavily 返回 432，日志中出现 `web search failed: 432`（6.6 的「搜索失败的原因」），`search_errors` 增加。饮食助手告诉用户现在查不到，照常回答，消息仍返回 200，5xx 告警不会触发。额度每月重置；用量在 Tavily 控制台查看。
 
 ## 7. 常见问题
 

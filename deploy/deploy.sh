@@ -35,6 +35,7 @@ DB_HOST=$(param db_host)
 DB_PASSWORD=$(param db_password)
 JWT_SECRET=$(param jwt_secret)
 CSRF_SECRET=$(param csrf_secret)
+TAVILY_API_KEY=$(param tavily_api_key)
 ENV
 mv .env.new .env
 

@@ -3,6 +3,7 @@
 
 import { reactive, readonly } from 'vue'
 import { api, ApiError, type Me, type User } from './api'
+import { clearChat } from './lib/chatStore'
 
 const state = reactive({
   user: null as User | null,
@@ -44,6 +45,8 @@ export const session = {
       await api.logout()
     } finally {
       apply(null)
+      // The next person on this computer must not see the conversation.
+      clearChat()
     }
   },
 
@@ -54,5 +57,6 @@ export const session = {
   /** The session expired or was revoked elsewhere. */
   clear() {
     apply(null)
+    clearChat()
   },
 }

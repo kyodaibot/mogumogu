@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReply(t *testing.T) {
@@ -78,5 +79,14 @@ func TestReplyPassesEstimatesOn(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("%s lacks %s", out, want)
 		}
+	}
+}
+
+// The AI service gives up after 30 s; Go must wait longer, or it cuts off
+// the service's own answer (a timeout error included).
+func TestTimeoutIsLongerThanTheServices(t *testing.T) {
+	const serviceHardLimit = 30 * time.Second
+	if Timeout <= serviceHardLimit {
+		t.Fatalf("Timeout = %v, want more than the AI service's %v", Timeout, serviceHardLimit)
 	}
 }

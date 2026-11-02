@@ -137,6 +137,11 @@ func NewRouter(d Deps) *gin.Engine {
 	private.PUT("/meal-records/:id", a.updateMeal)
 	private.DELETE("/meal-records/:id", a.deleteMeal)
 
+	private.GET("/memories", a.listMemories)
+	private.POST("/memories", a.createMemory)
+	private.PUT("/memories/:id", a.updateMemory)
+	private.DELETE("/memories/:id", a.deleteMemory)
+
 	private.POST("/assistant/messages", a.postAssistantMessage)
 	private.POST("/assistant/proposals/:id/execute", a.executeProposal)
 

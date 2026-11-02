@@ -25,7 +25,11 @@ type fakeAI struct {
 	requests []assistant.Request
 	fail     bool
 	// Staged changes returned with the reply.
-	changes []assistant.Change
+	changes       []assistant.Change
+	memoryChanges []assistant.MemoryChange
+	sources       []assistant.Source
+	// Runs while the reply is being made, as if the user acted meanwhile.
+	during func()
 }
 
 func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Reply, error) {
@@ -35,6 +39,9 @@ func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Repl
 	if f.fail {
 		return assistant.Reply{}, errors.New("ai service: status 503 invalid_output")
 	}
+	if f.during != nil {
+		f.during()
+	}
 	lunch := "lunch"
 	return assistant.Reply{
 		Reply: "这是三个方案：",
@@ -42,8 +49,10 @@ func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Repl
 			Serving: assistant.Nutrition{Calories: 650, ProteinG: 35, FatG: 18, CarbsG: 85},
 			Per100g: assistant.Nutrition{Calories: 163, ProteinG: 9, FatG: 4, CarbsG: 21},
 		}}},
-		MealType: &lunch,
-		Changes:  f.changes,
+		MealType:      &lunch,
+		Changes:       f.changes,
+		MemoryChanges: f.memoryChanges,
+		Sources:       f.sources,
 	}, nil
 }
 

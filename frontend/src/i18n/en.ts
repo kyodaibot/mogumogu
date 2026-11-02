@@ -105,6 +105,19 @@ export const en = {
     saved: 'Saved.',
     saveAndStart: 'Save and get started',
   },
+  memories: {
+    title: 'What I remember',
+    lead: 'Lasting preferences the meal assistant keeps in mind, such as “I don’t like spicy food”. It saves them when you mention them in the chat; you can also add, edit or delete them here.',
+    proOnly: 'Remembering preferences is a Pro feature. You can still see and delete what was saved.',
+    empty: 'Nothing yet. Tell the meal assistant something like “I don’t like spicy food”.',
+    addLabel: 'New memory',
+    addPlaceholder: 'e.g. I don’t like spicy food',
+    add: 'Add',
+    count: (n: number, max: number) => `${n} / ${max}`,
+    duplicate: 'You already have this one.',
+    full: (max: number) => `You can keep up to ${max}. Delete one first.`,
+    tooLong: (max: number) => `At most ${max} characters, on one line.`,
+  },
   eventForm: {
     editTitle: 'Edit event',
     newTitle: 'New event',
@@ -142,6 +155,7 @@ export const en = {
     limitReached: 'You have used up today’s questions. Come back tomorrow.',
     ownLimitReached: (limit: number) => `You have reached today’s limit of ${limit} questions. Come back tomorrow.`,
     tooFast: 'Too many messages in a short time. Wait a moment, then retry.',
+    interrupted: 'You left the page before the answer came. Please send it again.',
     unavailable: 'The meal assistant could not answer this time. Please retry.',
     tooLong: (max: number) => `Messages can be up to ${max} characters.`,
     /** How a target date reads inside a question. */
@@ -161,6 +175,16 @@ export const en = {
     turnLimit: (max: number) => `This chat has reached ${max} messages. Start a new chat to keep going.`,
     addToLog: 'Add to meal log',
     added: 'Added ✓',
+    /** The links under a reply to the web pages it cites (Pro). */
+    sources: 'Sources',
+    /** The line under a reply that saved or forgot memories (Pro). */
+    memoryNote: {
+      updated: 'Memory updated',
+      ops: { create: 'Remembered', update: 'Changed', delete: 'Forgot' },
+      undo: 'Undo',
+      undone: 'Undone',
+      manage: 'See everything I remember',
+    },
     /** The card of changes to the meal log the assistant proposes (Pro). */
     proposal: {
       title: 'Changes to your meal log',

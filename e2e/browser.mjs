@@ -257,6 +257,16 @@ async function main() {
     asks[2].history.length === 2 && asks[2].history[1].message === 'その日は何を食べたらいい？' && !('reason' in asks[1].history[0].recommendations[0]),
     asks.map((a) => a.history.length).join(' / '))
 
+  // The conversation is kept in this tab: after a reload the panel starts
+  // closed and shows it again, and the next message carries it as history.
+  await evaluate('window.__beforeReload = true')
+  await send('Page.reload')
+  await waitFor(`!window.__beforeReload && !!document.querySelector('.fab')`, 'calendar after reload')
+  check('after a reload the panel starts closed', !(await evaluate(`!!${q('.panel')}`)))
+  await click('.fab')
+  await waitFor(`document.querySelectorAll('.panel .bubble.user').length === 3`, 'conversation after reload')
+  check('after a reload the conversation is still there', (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 6)
+
   // A follow-up only makes sense with the history: the fake model names the
   // earlier recommendation it builds on.
   await fill('#assistant-input', 'ご飯なしで')
@@ -344,11 +354,14 @@ async function main() {
   check('after the admin command makes the account Pro, the tier shows Pro', (await textOf('.account .tier')) === 'Pro', await textOf('.account .tier'))
   await click('.fab')
   await waitFor(`!!document.querySelector('.panel')`, 'panel after reload')
-  check('reload starts a new conversation', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
+  check('a new chat stays empty after a reload', await evaluate(`!!${q('.panel .intro')} && !document.querySelector('.panel .bubble')`))
 
-  // Pro: the assistant proposes a record; nothing is saved until it runs.
+  // Pro: the assistant proposes a record; nothing is saved until it runs. A
+  // preference in the same message is saved at once, with a note under the
+  // reply. (One message for both: the assistant allows 6 a minute.)
   const ramenOnCalendar = `[...document.querySelectorAll('.meal-group')].some(e => e.innerText.includes('ラーメン'))`
-  await fill('#assistant-input', '昼食にラーメンを食べた')
+  const memories = `fetch('/api/memories').then(r => r.json()).then(r => r.items.map(m => m.content))`
+  await fill('#assistant-input', '昼食にラーメンを食べた、辛いものが苦手って覚えて')
   await click('.composer button[type=submit]')
   await waitFor(`!!document.querySelector('.panel .proposal')`, 'proposal card')
   const card = await textOf('.panel .proposal')
@@ -362,6 +375,16 @@ async function main() {
   await waitFor(ramenOnCalendar, 'calendar shows the recorded meal')
   const run = requests.find((r) => r.url.endsWith('/execute'))
   check('running sends the checked changes; the calendar shows the new record', JSON.parse(run.body).accepted.join() === '0', run.body)
+
+  await waitFor(`!!document.querySelector('.panel .memory-note')`, 'memory note')
+  await click('.panel .memory-note summary')
+  const note = await textOf('.panel .memory-note')
+  check('a memory is saved without a card, and the note says so',
+    note.includes('記憶を更新しました') && note.includes('覚えた') && note.includes('辛いものが苦手') &&
+      (await evaluate(memories)).join() === '辛いものが苦手', note.replace(/\n/g, ' | '))
+  await click('.panel .memory-note .undo')
+  await waitFor(`document.querySelector('.panel .memory-note')?.innerText.includes('取り消しました')`, 'memory undone')
+  check('✕ undoes a new memory', (await evaluate(memories)).length === 0)
   await click('.panel .close')
 
   // Delete the event (accept the confirm dialog).
@@ -374,6 +397,26 @@ async function main() {
   await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='プロフィール').click()`)
   await waitFor(`location.pathname === '/profile' && !!document.querySelector('input[placeholder^="例：ピーナッツ"]')`, 'profile with allergens')
   check('profile keeps allergens', (await evaluate(`${q('input[placeholder^="例：ピーナッツ"]')}.value`)) === 'ピーナッツ、えび')
+
+  // Memories can also be added and edited by hand on the Profile page.
+  await waitFor(`!!document.querySelector('#memories .add input')`, 'memory form')
+  await fill('#memories .add input', '魚が好き')
+  await click('#memories .add button')
+  await waitFor(`document.querySelector('#memories .list')?.innerText.includes('魚が好き')`, 'memory added')
+  await clickText('#memories button', '編集')
+  await fill('#memories .list input', '白身魚が好き')
+  await clickText('#memories button', '保存')
+  await waitFor(`document.querySelector('#memories .list')?.innerText.includes('白身魚が好き') && !document.querySelector('#memories .list input')`, 'memory edited')
+  check('memories can be added and edited on the Profile page',
+    (await evaluate(memories)).join() === '白身魚が好き' && (await textOf('#memories .count')) === '1 / 30')
+
+  // Back on the calendar, the conversation from before is still there.
+  await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='カレンダー').click()`)
+  await waitFor(`location.pathname === '/' && !!document.querySelector('.fab')`, 'calendar again')
+  await click('.fab')
+  await waitFor(`!!document.querySelector('.panel .memory-note')`, 'conversation after visiting the profile')
+  check('leaving the calendar keeps the conversation', (await textOf('.panel .bubble.user')).includes('ラーメン'))
+  await click('.panel .close')
 
   // CSRF: every write after registration used the session token, none failed.
   const writes = requests.filter((r) => r.method !== 'GET')
@@ -416,7 +459,7 @@ async function main() {
   const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
   check('an English question asks for, and gets, an English reply',
     JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
-  check('the first message of a new chat has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
+  check('logging out ends the conversation: the next message has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.day.today')`, 'calendar after reload')

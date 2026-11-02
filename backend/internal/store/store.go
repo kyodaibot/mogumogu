@@ -238,6 +238,101 @@ func (s *Store) DeleteMeal(ctx context.Context, userID, id int64) error {
 	return nil
 }
 
+// --- memories ---
+
+// ListMemories returns the user's memories, oldest first.
+func (s *Store) ListMemories(ctx context.Context, userID int64) ([]Memory, error) {
+	var memories []Memory
+	err := s.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at, id").Find(&memories).Error
+	return memories, err
+}
+
+// CreateMemory adds a memory unless the user already has max of them or the
+// same one.
+func (s *Store) CreateMemory(ctx context.Context, userID int64, content string, max int) (Memory, error) {
+	m := Memory{UserID: userID, Content: content}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Locking the user's row makes two concurrent adds count one after the other.
+		if err := tx.Exec("SELECT 1 FROM users WHERE id = ? FOR UPDATE", userID).Error; err != nil {
+			return err
+		}
+		var n int64
+		if err := tx.Model(&Memory{}).Where("user_id = ?", userID).Count(&n).Error; err != nil {
+			return err
+		}
+		if n >= int64(max) {
+			return ErrMemoryFull
+		}
+		return memoryError(tx.Select("UserID", "Content").Create(&m).Error)
+	})
+	if err != nil {
+		return Memory{}, err
+	}
+	return m, s.db.WithContext(ctx).Where("id = ?", m.ID).Take(&m).Error
+}
+
+// UpdateMemory changes the content of the user's memory. With lockedAt set,
+// only a memory still at that updated_at is changed (ErrMemoryChanged
+// otherwise).
+func (s *Store) UpdateMemory(ctx context.Context, userID, id int64, content string, lockedAt *time.Time) (Memory, error) {
+	var m Memory
+	q := s.memoryQuery(ctx, userID, id, lockedAt)
+	res := q.Model(&m).Clauses(clause.Returning{}).
+		Updates(map[string]any{"content": content, "updated_at": time.Now()})
+	if err := memoryError(res.Error); err != nil {
+		return Memory{}, err
+	}
+	if res.RowsAffected == 0 {
+		return Memory{}, s.missingMemory(ctx, userID, id)
+	}
+	return m, nil
+}
+
+// DeleteMemory deletes the user's memory and returns it; lockedAt works as in
+// UpdateMemory.
+func (s *Store) DeleteMemory(ctx context.Context, userID, id int64, lockedAt *time.Time) (Memory, error) {
+	var m Memory
+	res := s.memoryQuery(ctx, userID, id, lockedAt).Clauses(clause.Returning{}).Delete(&m)
+	if res.Error != nil {
+		return Memory{}, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return Memory{}, s.missingMemory(ctx, userID, id)
+	}
+	return m, nil
+}
+
+func (s *Store) memoryQuery(ctx context.Context, userID, id int64, lockedAt *time.Time) *gorm.DB {
+	q := s.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID)
+	if lockedAt != nil {
+		q = q.Where("updated_at = ?", *lockedAt)
+	}
+	return q
+}
+
+// missingMemory tells why a write touched no row: the memory changed since it
+// was read, or it is gone (or another user's).
+func (s *Store) missingMemory(ctx context.Context, userID, id int64) error {
+	var exists bool
+	err := s.db.WithContext(ctx).
+		Raw(`SELECT EXISTS (SELECT 1 FROM memories WHERE id = ? AND user_id = ?)`, id, userID).
+		Scan(&exists).Error
+	switch {
+	case err != nil:
+		return err
+	case exists:
+		return ErrMemoryChanged
+	}
+	return ErrNotFound
+}
+
+func memoryError(err error) error {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrMemoryDuplicate
+	}
+	return err
+}
+
 // --- assistant usage quota ---
 
 // TakeAssistantQuota returns one of these when a daily limit is used up. The

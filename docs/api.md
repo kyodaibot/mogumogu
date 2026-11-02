@@ -74,7 +74,7 @@
 | 401 | `unauthenticated` | 未登录、令牌无效、过期或已撤销 |
 | 401 | `invalid_credentials` | 登录时用户名或密码错误（不区分是哪一个错） |
 | 403 | `csrf_failed` | CSRF 校验失败，见 2.4 |
-| 403 | `pro_required` | 需要 Pro 账号（执行变更提案，见 9.4） |
+| 403 | `pro_required` | 需要 Pro 账号（执行变更提案，见 9.4；新增或修改记忆，见 10） |
 | 404 | `not_found` | 资源不存在，**或属于其他用户**（两者不区分） |
 | 404 | `profile_not_found` | 当前用户尚未创建 Profile |
 | 409 | `username_taken` | 注册时用户名已被使用 |
@@ -85,7 +85,7 @@
 | 429 | `rate_limited` | 短时间内请求太多（限流，见 2.5），稍后可以重试；响应带 `Retry-After` 头（秒） |
 | 429 | `quota_exceeded` | 饮食助手今天的调用额度用完，次日恢复；响应带 `Retry-After` 头（秒，到次日 0 点）；用完的是用户自己的额度时带 `limit` |
 | 500 | `internal_error` | 服务端错误 |
-| 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效）。不计入调用额度，可以重试 |
+| 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效；Go 最多等 35 秒）。不计入调用额度，可以重试 |
 
 `details[].reason` 取值：
 
@@ -97,7 +97,8 @@
 | `too_many_decimals` | 小数位数超过允许值 |
 | `invalid_format` | 格式错误（日期、时刻、用户名字符等） |
 | `invalid_value` | 不在枚举值中 |
-| `duplicate_item` | 数组中有重复元素 |
+| `duplicate_item` | 数组中有重复元素；已有相同内容的记忆（10） |
+| `limit_reached` | 已达到条数上限（记忆最多 30 条，10） |
 | `must_be_after_starts_at` | `ends_at` 不晚于 `starts_at` |
 | `duration_too_long` | 行程时长超过 24 小时 |
 | `range_too_large` | 查询的日期范围超过上限 |
@@ -206,6 +207,10 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 | GET | `/api/meal-records/{id}` | 是 | 读取一条饮食记录 |
 | PUT | `/api/meal-records/{id}` | 是 | 替换一条饮食记录 |
 | DELETE | `/api/meal-records/{id}` | 是 | 删除一条饮食记录 |
+| GET | `/api/memories` | 是 | 列出记忆 |
+| POST | `/api/memories` | 是 | 新增记忆（Pro） |
+| PUT | `/api/memories/{id}` | 是 | 替换一条记忆的内容（Pro） |
+| DELETE | `/api/memories/{id}` | 是 | 删除一条记忆 |
 | POST | `/api/assistant/messages` | 是 | 向饮食助手发送一条消息 |
 | POST | `/api/assistant/proposals/{id}/execute` | 是 | 执行变更提案（Pro） |
 
@@ -490,7 +495,9 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
     }
   ],
   "ask_meal_type": false,
-  "proposal": null
+  "proposal": null,
+  "memory_updates": [],
+  "sources": []
 }
 ```
 
@@ -527,6 +534,28 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
   - `changes`：最多 10 项，按顺序编号 0、1、2…，执行时用这个编号。`before` 是提案时记录的内容（新增为 `null`），`after` 是要写入的内容（删除为 `null`）。新增的营养值是饮食助手的估算，前端标明「目安」。
   - Go 在保存提案前按 7.1 的规则校验每一项，并检查要修改或删除的记录属于这个用户、同一条记录只出现一次。不通过时整条消息按 `503 ai_unavailable` 处理（退还额度）。
+- `memory_updates`：饮食助手随这条回复保存的记忆（GLOSSARY），只有 Pro 用户、且确实写入了时才有内容，否则为空数组。记忆不经确认，已经保存；前端在回复下方显示一行提示，新增的可以用 `DELETE /api/memories/{id}` 撤销。
+
+  ```json
+  [
+    { "op": "create", "id": 8, "content": "辛いものが苦手", "before": null },
+    { "op": "update", "id": 5, "content": "醤油ラーメンが好き", "before": "豚骨ラーメンが好き" },
+    { "op": "delete", "id": 3, "content": "魚が好き", "before": null }
+  ]
+  ```
+
+  - `content`：新增和修改是保存后的内容，删除是被删的内容；`before` 只在修改时有，是修改前的内容。
+  - Go 写入前按 10 的规则再检查每一项，并检查等级、修改和删除的记忆在这条消息的上下文中（属于这个用户），以及从读取上下文到写入之间没有被改过（乐观锁，比较 `updated_at`）。不通过的项跳过、记入日志（不含内容），其余照常写入，回复照常返回。消息返回 `503` 时什么都不写入。
+- `sources`：来源（GLOSSARY），即回复引用的网页。只有 Pro 用户、且饮食助手搜索了网络并用到了结果时才有内容，否则为空数组。前端在回复下方显示为链接。
+
+  ```json
+  [
+    { "title": "生協食堂メニュー情報 | 食生活支援", "url": "https://www.s-coop.net/service/food/menu_info" }
+  ]
+  ```
+
+  - `url`：AI 服务只接受这条消息的搜索结果中实际出现的 URL；`title` 由 AI 服务从搜索结果中填写，不是模型写的，可能为空字符串（前端改为显示域名）。
+  - Go 再检查一次：只保留 `http` 或 `https`、带主机名、不超过 2048 字节的 URL，最多 5 个；标题截断到 200 个字符。不合格的项丢掉、记入日志，回复照常返回。Normal 用户的回复不带来源。
 
 错误：`401`、`403`、`413`（超过 128 KB）、`422`（`date`、`message`、`locale` 或 `history` 不合规则）、`429 rate_limited`（每分钟限流）、`429 quota_exceeded`（调用额度用完）、`503 ai_unavailable`。
 
@@ -552,7 +581,7 @@ Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手
 | GET | `/internal/agent/events?from=&to=` | 同 6.2，但最多 31 天 |
 
 - 认证：`Authorization: Bearer <令牌>`。令牌由 Go 在每条消息开始时签发，随请求传给 AI 服务，只对这一个用户有效，60 秒后过期。签名密钥在 Go 启动时随机生成，只保存在内存中。令牌无效时返回 `401 unauthenticated`。
-- Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`Reply`）和 `backend/internal/assistant/client.go`。请求的上下文中带 `allow_proposal`（用户是否为 Pro），回复中带暂存的修改 `changes`。AI 服务没有写入数据的接口。
+- Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`Reply`）和 `backend/internal/assistant/client.go`。请求的上下文中带 `allow_proposal` 和 `allow_memory`（现在都是「用户是否为 Pro」）以及记忆列表 `memories`（`id`、`content`；不允许记忆时为空），回复中带暂存的修改 `changes` 和记忆的修改 `memory_changes`（`op`、`memory_id`、`content`）。AI 服务没有写入数据的接口。
 
 ### 9.4 `POST /api/assistant/proposals/{id}/execute`
 
@@ -587,7 +616,39 @@ Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手
 
 错误：`401`、`403 csrf_failed`、`403 pro_required`（当前不是 Pro，包括提案后被降级）、`404`（提案不存在或属于其他用户）、`409 proposal_executed`、`410 proposal_expired`（生成后超过 2 小时）、`422`。
 
-## 10. 设计决定
+## 10. 记忆（memories）
+
+记忆（GLOSSARY）是饮食助手在所有对话中参考的长期偏好。饮食助手随回复保存（9.1 `memory_updates`），用户也可以通过下面的接口自己管理。都需要登录和 CSRF（写接口）。
+
+### 10.1 字段
+
+| 字段 | 类型 | 规则 |
+|---|---|---|
+| `id` | integer | 只读 |
+| `content` | string | 必填；去空白后 1–100 个字符，不能包含换行等控制字符（`invalid_format`）。同一用户内不能重复（`duplicate_item`） |
+| `created_at` / `updated_at` | 时刻 | 只读 |
+
+每位用户最多 30 条，超过时新增返回 `422`，`field` 为 `content`，`reason` 为 `limit_reached`。
+
+### 10.2 `GET /api/memories`
+
+所有等级都可以使用（降级后的用户也能查看）。按创建时间从早到晚。
+
+```json
+{ "items": [
+  { "id": 3, "content": "辛いものが苦手", "created_at": "2026-11-02T12:00:00+09:00", "updated_at": "2026-11-02T12:00:00+09:00" }
+] }
+```
+
+### 10.3 `POST /api/memories`、`PUT /api/memories/{id}`
+
+请求体 `{ "content": "辛いものが苦手" }`。只有 Pro 可以使用，否则返回 `403 pro_required`。成功分别返回 `201` 和 `200`，响应为 10.2 中的一项。错误：`401`、`403`、`404`（`PUT` 时不存在或属于其他用户）、`422`。
+
+### 10.4 `DELETE /api/memories/{id}`
+
+所有等级都可以使用。成功返回 `204`；不存在或属于其他用户时返回 `404`。
+
+## 11. 设计决定
 
 以下各项已于 2026-10-23 确认。
 

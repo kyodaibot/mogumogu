@@ -13,7 +13,9 @@ import (
 )
 
 // Timeout bounds one message, including every model call and tool query.
-const Timeout = 30 * time.Second
+// The AI service stops itself after 30 s (its TimeBudget), so this is longer:
+// its answer, even a timeout error, still arrives (docs/operations.md 6.11).
+const Timeout = 35 * time.Second
 
 const maxReplyBytes = 64 << 10
 
@@ -30,12 +32,18 @@ type Context struct {
 	Timezone   string `json:"timezone"`
 	Locale     string `json:"locale"` // the reply's language: "ja" or "en"
 	// Whether the assistant may stage changes to meal records (Pro only).
-	AllowProposal bool  `json:"allow_proposal"`
-	Profile       any   `json:"profile"`
-	Events        any   `json:"events"`
-	EventsRange   Range `json:"events_range"`
-	Meals         any   `json:"meals"`
-	MealsRange    Range `json:"meals_range"`
+	AllowProposal bool `json:"allow_proposal"`
+	// Whether the assistant reads and changes the user's memories (Pro
+	// only). Memories is empty when it does not.
+	AllowMemory bool `json:"allow_memory"`
+	// Whether the assistant may search the web (Pro only).
+	AllowSearch bool  `json:"allow_search"`
+	Memories    any   `json:"memories"`
+	Profile     any   `json:"profile"`
+	Events      any   `json:"events"`
+	EventsRange Range `json:"events_range"`
+	Meals       any   `json:"meals"`
+	MealsRange  Range `json:"meals_range"`
 }
 
 type Request struct {
@@ -107,6 +115,27 @@ type Reply struct {
 	// Changes to meal records the assistant staged; Go checks and saves them
 	// as a proposal. Empty when it staged none.
 	Changes []Change `json:"changes"`
+	// Changes to the user's memories; Go checks and saves them without a
+	// confirmation (plans/archive/memories.md).
+	MemoryChanges []MemoryChange `json:"memory_changes"`
+	// Web pages the reply cites (GLOSSARY: 来源). The AI service accepts only
+	// URLs its searches returned; Go checks them again before the browser
+	// gets them.
+	Sources []Source `json:"sources"`
+}
+
+type Source struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+// MemoryChange is one change to the user's memories.
+type MemoryChange struct {
+	Op string `json:"op"` // create, update or delete
+	// The memory to update or delete.
+	MemoryID *int64 `json:"memory_id"`
+	// create, update: the memory's new text.
+	Content *string `json:"content"`
 }
 
 // Change is one staged change to the user's meal records (project-review 4).

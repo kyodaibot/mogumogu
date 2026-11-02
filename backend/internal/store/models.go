@@ -85,6 +85,18 @@ type MealRecord struct {
 
 func (MealRecord) TableName() string { return "meal_records" }
 
+// Memory is one memory (GLOSSARY: 记忆): a lasting preference or fact the
+// user stated, which the meal assistant reads in every conversation.
+type Memory struct {
+	ID        int64
+	UserID    int64
+	Content   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (Memory) TableName() string { return "memories" }
+
 // Proposal is a change proposal (GLOSSARY: 变更提案): changes to the user's
 // meal records the assistant staged. They run once, when the user confirms.
 type Proposal struct {
@@ -218,6 +230,13 @@ func (a NullStringArray) Value() (driver.Value, error) {
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrUsernameTaken = errors.New("username taken")
+)
+
+// Memory writes return these when they cannot be made.
+var (
+	ErrMemoryDuplicate = errors.New("the user already has this memory")
+	ErrMemoryFull      = errors.New("the user has the most memories allowed")
+	ErrMemoryChanged   = errors.New("the memory changed since it was read")
 )
 
 // ExecuteProposal returns these when the proposal cannot run.

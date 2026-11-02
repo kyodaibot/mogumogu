@@ -1,4 +1,4 @@
-# The production stack on the EC2 instance (plans/phase-5.md). deploy.sh runs
+# The production stack on the EC2 instance (plans/archive/phase-5.md). deploy.sh runs
 # it from /opt/mogumogu, next to the .env it generates; the ${...} values come
 # from that .env. Differences from the local compose.yaml:
 # - images come from ECR, tagged with a commit, and are never built here;
@@ -82,6 +82,10 @@ services:
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID}
       AWS_REGION: ap-northeast-1
       GO_INTERNAL_URL: http://backend:8081
+      # Web search for Pro users (plans/web-search.md); Tavily's free plan,
+      # no card. Only the model's query is sent.
+      SEARCH_PROVIDER: tavily
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
       interval: 10s

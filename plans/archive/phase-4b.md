@@ -2,7 +2,7 @@
 
 > 状态：**已完成**（2026-10-31）。里程碑 4 的已知问题见下文；上线后的线上检查（见「验证」）待部署后进行。
 
-长期目标和共同约定见 docs/project-review.md（第 3.6 节「多轮对话」、第 4 节），术语见 GLOSSARY.md（对话、对话历史、轮、目标日期），接口见 docs/api.md 第 9 节。这是 plans/roadmap-tiers.md 路线图的第 1 步，对所有用户开放。
+长期目标和共同约定见 docs/project-review.md（第 3.6 节「多轮对话」、第 4 节），术语见 GLOSSARY.md（对话、对话历史、轮、目标日期），接口见 docs/api.md 第 9 节。这是 plans/archive/roadmap-tiers.md 路线图的第 1 步，对所有用户开放。
 
 ## 这个阶段要学会什么
 

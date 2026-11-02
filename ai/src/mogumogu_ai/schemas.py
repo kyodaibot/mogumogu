@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack"]
 
+# Sources one reply may cite; Go has the same limit.
+MAX_SOURCES = 5
+
 
 class Profile(BaseModel):
     height_cm: float | None = None
@@ -41,6 +44,14 @@ class Meal(BaseModel):
     carbs_g: float | None = None
 
 
+class Memory(BaseModel):
+    """A memory (GLOSSARY: 记忆): a lasting preference or fact the user stated.
+    update_memory and forget name one by its id."""
+
+    id: int
+    content: str
+
+
 class DateRange(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -58,6 +69,11 @@ class Context(BaseModel):
     locale: Literal["ja", "en"] = "en"
     # Whether the staging tools are offered (Pro only).
     allow_proposal: bool = False
+    # Whether the memory tools are offered (Pro only); memories is empty otherwise.
+    allow_memory: bool = False
+    # Whether web_search is offered (Pro only).
+    allow_search: bool = False
+    memories: list[Memory] = Field(default_factory=list)
     profile: Profile | None
     events: list[Event]
     events_range: DateRange
@@ -128,6 +144,17 @@ def _check_energy(n: "ServingNutrition | Per100gNutrition") -> None:
         )
 
 
+def _add_unit(data):
+    """The model sometimes writes protein, fat and carbs without _g; the
+    numbers are fine, so take them rather than reject the reply."""
+    if isinstance(data, dict):
+        for name in ("protein", "fat", "carbs"):
+            if name in data and f"{name}_g" not in data:
+                data = {**data, f"{name}_g": data[name]}
+                del data[name]
+    return data
+
+
 class ServingNutrition(BaseModel):
     """One typical serving, in total. Same ranges as a meal record."""
 
@@ -135,6 +162,11 @@ class ServingNutrition(BaseModel):
     protein_g: float = Field(ge=0, le=1000)
     fat_g: float = Field(ge=0, le=1000)
     carbs_g: float = Field(ge=0, le=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def add_unit(cls, data):
+        return _add_unit(data)
 
     @model_validator(mode="after")
     def energy_matches(self) -> "ServingNutrition":
@@ -156,6 +188,11 @@ class Per100gNutrition(BaseModel):
     protein_g: float = Field(ge=0, le=100)
     fat_g: float = Field(ge=0, le=100)
     carbs_g: float = Field(ge=0, le=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def add_unit(cls, data):
+        return _add_unit(data)
 
     @model_validator(mode="after")
     def fits_in_100g(self) -> "Per100gNutrition":
@@ -226,12 +263,24 @@ class SubmitReply(BaseModel):
         default=None,
         description="The meal all three recommendations are for; required with recommendations, otherwise null",
     )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="url of each web_search result the reply uses, copied exactly; empty when you did not search",
+    )
 
     @field_validator("recommendations")
     @classmethod
     def zero_or_three(cls, v: list[Recommendation]) -> list[Recommendation]:
         if len(v) not in (0, 3):
             raise ValueError("recommendations must be empty or exactly 3")
+        return v
+
+    @field_validator("sources")
+    @classmethod
+    def at_most_five_sources(cls, v: list[str]) -> list[str]:
+        v = list(dict.fromkeys(u.strip() for u in v))
+        if len(v) > MAX_SOURCES:
+            raise ValueError(f"at most {MAX_SOURCES} sources; keep the ones the reply relies on most")
         return v
 
     @model_validator(mode="before")
@@ -258,8 +307,20 @@ class SubmitReply(BaseModel):
         return self.model_copy(update={"recommendations": recs})
 
 
-class Reply(SubmitReply):
-    """Body of the response to Go: the reply and the changes staged with it
-    (tools.Staging), which Go checks and saves as a proposal."""
+class Source(BaseModel):
+    """A web page the reply cites (GLOSSARY: 来源). The title comes from the
+    search result, not from the model."""
 
+    title: str
+    url: str
+
+
+class Reply(SubmitReply):
+    """Body of the response to Go: the reply, the changes staged with it
+    (tools.Staging), which Go checks and saves as a proposal, and the changes
+    to memories (tools.MemoryChanges), which Go checks and saves at once.
+    sources gets each URL's title here (the model gives only URLs)."""
+
+    sources: list[Source] = Field(default_factory=list)  # type: ignore[assignment]
     changes: list[dict] = Field(default_factory=list)
+    memory_changes: list[dict] = Field(default_factory=list)
