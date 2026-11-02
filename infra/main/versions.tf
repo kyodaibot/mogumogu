@@ -1,4 +1,4 @@
-# Everything the demo environment needs (plans/phase-5.md). The state lives in
+# Everything the demo environment needs (plans/archive/phase-5.md). The state lives in
 # the bucket created by infra/bootstrap.
 #
 #   cd infra/main

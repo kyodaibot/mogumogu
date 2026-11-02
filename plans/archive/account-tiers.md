@@ -2,7 +2,7 @@
 
 > 状态：**已完成**（2026-10-31）。从 dev 切出 `feat/account-tiers`，三个里程碑一次完成。全站上限保持 100。上线后的检查（见「验证」）待部署后进行。
 
-这是 plans/roadmap-tiers.md 路线图的第 2 步。术语见 GLOSSARY.md（账号等级、调用额度）。
+这是 plans/archive/roadmap-tiers.md 路线图的第 2 步。术语见 GLOSSARY.md（账号等级、调用额度）。
 
 ## 这个阶段要学会什么
 

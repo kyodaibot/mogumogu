@@ -175,7 +175,7 @@ app-down: check-env
 app-logs: check-env
 	@$(WITH_ENV) docker compose --profile app logs -f
 
-# --- Cloud (plans/phase-5.md) ---
+# --- Cloud (plans/archive/phase-5.md) ---
 # The images run on an arm64 (Graviton) EC2 instance. Each is tagged with the
 # commit it was built from; ECR tags are immutable, so a tag always means the
 # same image and deploying an old tag is a rollback. A dirty working tree is

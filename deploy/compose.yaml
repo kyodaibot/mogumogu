@@ -1,4 +1,4 @@
-# The production stack on the EC2 instance (plans/phase-5.md). deploy.sh runs
+# The production stack on the EC2 instance (plans/archive/phase-5.md). deploy.sh runs
 # it from /opt/mogumogu, next to the .env it generates; the ${...} values come
 # from that .env. Differences from the local compose.yaml:
 # - images come from ECR, tagged with a commit, and are never built here;

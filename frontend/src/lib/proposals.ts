@@ -1,4 +1,4 @@
-// Change proposals in the chat (plans/change-proposals.md): what the card
+// Change proposals in the chat (plans/archive/change-proposals.md): what the card
 // shows for each change, and what the history keeps of them.
 
 import type { ChangeResult, HistoryChange, MealRecordInput, Proposal, ProposedChange, ProposedMeal } from '../api'

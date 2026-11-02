@@ -6,7 +6,7 @@ import { errorMessage } from '../lib/messages'
 import { fieldChanges, resultText, subjectOf, type ProposalState } from '../lib/proposals'
 import { t } from '../i18n'
 
-// The card of a change proposal (plans/change-proposals.md): every change the
+// The card of a change proposal (plans/archive/change-proposals.md): every change the
 // assistant staged, each with a checkbox. Nothing is saved until the user
 // runs it; afterwards each change shows its result and the card is locked.
 const props = defineProps<{ proposal: Proposal; state: ProposalState; today: Ymd }>()

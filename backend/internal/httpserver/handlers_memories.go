@@ -16,7 +16,7 @@ import (
 )
 
 // A user keeps at most maxMemories memories of at most maxMemoryChars
-// characters each (plans/memories.md); all of them go into every context.
+// characters each (plans/archive/memories.md); all of them go into every context.
 const (
 	maxMemories    = 30
 	maxMemoryChars = 100
@@ -176,7 +176,7 @@ type contextMemory struct {
 }
 
 // saveMemories writes the memory changes that came with a reply, without a
-// confirmation (plans/memories.md). A change that fails a check is skipped
+// confirmation (plans/archive/memories.md). A change that fails a check is skipped
 // and the rest still run; only the ones written are returned. known are the
 // memories that were in the context: updates and deletes may only name them,
 // and only while they are unchanged since (the optimistic lock).

@@ -4,7 +4,7 @@ import { api, ApiError, type MemoryUpdate } from '../api'
 import { errorMessage } from '../lib/messages'
 import { t } from '../i18n'
 
-// The line under a reply that saved or forgot memories (plans/memories.md).
+// The line under a reply that saved or forgot memories (plans/archive/memories.md).
 // They are already saved; a new one can be undone here with ✕.
 const props = defineProps<{
   updates: MemoryUpdate[]
