@@ -37,12 +37,14 @@ export interface ClientDeps {
 export interface RequestOptions {
   /** Do not call onUnauthorized on 401 (used for the startup "who am I" check). */
   quiet401?: boolean
+  /** Give up after this many milliseconds with ApiError code "timeout". */
+  timeoutMs?: number
 }
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
 export function createClient(deps: ClientDeps) {
-  async function send(method: Method, path: string, body?: unknown): Promise<Response> {
+  async function send(method: Method, path: string, body?: unknown, timeoutMs?: number): Promise<Response> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     if (method !== 'GET') {
@@ -51,15 +53,21 @@ export function createClient(deps: ClientDeps) {
       const token = deps.getCookie(CSRF_COOKIE)
       if (token) headers[CSRF_HEADER] = token
     }
+    const abort = new AbortController()
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => abort.abort(), timeoutMs)
     try {
       return await deps.fetch(path, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: 'same-origin',
+        signal: abort.signal,
       })
     } catch {
+      if (abort.signal.aborted) throw new ApiError(0, 'timeout', 'No response in time')
       throw new ApiError(0, 'network_error', 'Network request failed')
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -83,13 +91,13 @@ export function createClient(deps: ClientDeps) {
 
   async function request<T>(method: Method, path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
     if (method !== 'GET') await ensureCsrf()
-    let res = await send(method, path, body)
+    let res = await send(method, path, body, opts.timeoutMs)
     let err = res.ok ? null : await toError(res)
 
     // The token may have expired or belong to an old session: refresh once.
     if (err?.code === 'csrf_failed') {
       await ensureCsrf(true)
-      res = await send(method, path, body)
+      res = await send(method, path, body, opts.timeoutMs)
       err = res.ok ? null : await toError(res)
     }
     if (err) {

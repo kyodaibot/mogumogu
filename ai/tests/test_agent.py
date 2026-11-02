@@ -5,8 +5,9 @@ import pytest
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from mogumogu_ai.agent import run_agent
-from mogumogu_ai.prompt import SYSTEM_PROMPT
 from mogumogu_ai.model import FakeModel, reply, tool_call
+from mogumogu_ai.prompt import SYSTEM_PROMPT
+from mogumogu_ai.time_budget import TimeBudget
 
 from .conftest import FakeSource, make_request, turn
 
@@ -48,10 +49,10 @@ def query(name="get_meals", from_date="2026-10-01", to_date="2026-10-14"):
     return tool_call(name, from_date=from_date, to_date=to_date)
 
 
-async def run(script, message="今日の昼食は何を食べたらいい？", allergens=None, source=None, history=None):
+async def run(script, message="今日の昼食は何を食べたらいい？", allergens=None, source=None, history=None, time=None):
     model = FakeModel(script)
     source = source or FakeSource()
-    outcome = await run_agent(model, source, make_request(message, allergens, history=history))
+    outcome = await run_agent(model, source, make_request(message, allergens, history=history), time)
     return outcome, model, source
 
 
@@ -60,7 +61,7 @@ async def test_submit_directly():
 
     assert outcome.error is None
     assert [r.name for r in outcome.result.recommendations] == [r["name"] for r in RECS]
-    assert outcome.steps == 1
+    assert outcome.counts.model_calls == 1
     assert (outcome.input_tokens, outcome.output_tokens) == (100, 20)
     assert source.calls == []
     # The first call may use any tool; the context and message are in the prompt.
@@ -79,7 +80,7 @@ async def test_query_then_submit():
     )
 
     assert outcome.result.recommendations == []
-    assert outcome.steps == 2
+    assert outcome.counts.model_calls == 2
     # Both queries of one step ran, and their results went back to the model.
     assert [c[0] for c in source.calls] == ["meals", "events"]
     assert source.calls[0][1:] == (date(2026, 10, 1), date(2026, 10, 14))
@@ -122,7 +123,7 @@ async def test_steps_used_up_goes_to_force_finish():
     outcome, model, source = await run(script)
 
     assert outcome.error is None
-    assert outcome.steps == 5
+    assert outcome.counts.model_calls == 5
     # The 4th agent call's query is not run; force_finish allows only submit_reply.
     assert len(source.calls) == 3
     assert [c["force_tool"] for c in model.calls] == [None] * 4 + ["submit_reply"]
@@ -140,7 +141,7 @@ async def test_query_alongside_submit_is_ignored():
     outcome, _, source = await run([reply(query(), submit())])
 
     assert outcome.error is None
-    assert outcome.steps == 1
+    assert outcome.counts.model_calls == 1
     assert source.calls == []
 
 
@@ -149,7 +150,7 @@ async def test_invalid_reply_is_sent_back_once():
 
     assert outcome.error is None
     assert outcome.retried
-    assert outcome.steps == 2
+    assert outcome.counts.model_calls == 2
     assert model.calls[1]["force_tool"] == "submit_reply"
     feedback = model.calls[1]["messages"][-1]
     assert isinstance(feedback, ToolMessage) and "failed validation" in feedback.content
@@ -204,7 +205,7 @@ async def test_at_most_six_model_calls():
 
     assert outcome.error == "invalid_output"
     assert len(model.calls) == 6
-    assert outcome.steps == 6
+    assert outcome.counts.model_calls == 6
     assert len(source.calls) == 3
 
 
@@ -317,3 +318,139 @@ async def test_history_cannot_allow_an_allergen():
     assert outcome.error is None
     assert outcome.retried
     assert "えび" not in " ".join(r.name for r in outcome.result.recommendations)
+
+
+class Clock:
+    """A clock the scripted model moves forward, to play out slow calls."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def takes(clock: Clock, seconds: float, step=None):
+    """A script step that takes this long; with no step, it times out."""
+    def run(messages):
+        clock.now += seconds
+        if step is None:
+            raise TimeoutError
+        return step
+    return run
+
+
+async def test_call_cut_at_soft_limit_goes_to_force_finish():
+    clock = Clock()
+    # Started at 19 s would be refused, so start at 16 s and get cut at 20 s.
+    clock.now = 16
+    outcome, model, _ = await run([takes(clock, 4), takes(clock, 5, reply(submit()))], time=TimeBudget(clock))
+
+    assert outcome.error is None and outcome.result is not None
+    assert outcome.finish == "soft_deadline"
+    assert (outcome.counts.model_calls, outcome.counts.model_timeouts) == (2, 1)
+    assert model.calls[1]["force_tool"] == "submit_reply"
+
+
+async def test_no_model_call_with_tools_under_3_s_before_soft_limit():
+    clock = Clock()
+    time = TimeBudget(clock)
+    clock.now = 17.5
+    outcome, model, _ = await run([reply(submit())], time=time)
+
+    # The only call is the forced submit.
+    assert outcome.finish == "soft_deadline"
+    assert len(model.calls) == 1 and model.calls[0]["force_tool"] == "submit_reply"
+
+
+async def test_tools_not_run_after_soft_limit():
+    clock = Clock()
+    outcome, model, source = await run(
+        [takes(clock, 19.5, reply(query())), reply(submit())], time=TimeBudget(clock)
+    )
+
+    assert source.calls == []
+    assert outcome.finish == "soft_deadline"
+    # The query was answered with "time is up", then the forced submit.
+    (answer,) = [m for m in model.calls[1]["messages"] if isinstance(m, ToolMessage)]
+    assert "Time is up" in answer.content
+    assert model.calls[1]["force_tool"] == "submit_reply"
+
+
+async def test_slow_go_query_times_out_and_the_model_answers_without_it():
+    class SlowSource(FakeSource):
+        async def fetch(self, kind, start, end):
+            raise TimeoutError
+
+    outcome, model, _ = await run([reply(query()), reply(submit())], source=SlowSource())
+
+    assert outcome.result is not None and outcome.counts.go_timeouts == 1
+    (answer,) = [m for m in model.calls[1]["messages"] if isinstance(m, ToolMessage)]
+    assert "timed out" in answer.content
+
+
+async def test_failed_validation_without_time_to_retry_is_deadline_invalid():
+    clock = Clock()
+    # Cut at 20 s, the forced submit ends at 26 s and fails validation.
+    outcome, model, _ = await run(
+        [takes(clock, 20), takes(clock, 6, reply(bad_submit()))], time=TimeBudget(clock)
+    )
+
+    assert outcome.result is None
+    assert (outcome.error, outcome.finish) == ("invalid_output", "deadline_invalid")
+    assert len(model.calls) == 2
+
+
+async def test_failed_validation_with_time_left_is_retried():
+    clock = Clock()
+    outcome, model, _ = await run(
+        [takes(clock, 5, reply(bad_submit())), takes(clock, 5, reply(submit()))], time=TimeBudget(clock)
+    )
+
+    assert outcome.result is not None and outcome.retried
+    assert outcome.finish == "submitted"
+
+
+async def test_final_call_reaching_the_hard_limit_is_a_timeout():
+    clock = Clock()
+    outcome, _, _ = await run([takes(clock, 20), takes(clock, 10)], time=TimeBudget(clock))
+
+    assert outcome.result is None
+    assert (outcome.error, outcome.finish) == ("timeout", "soft_deadline")
+    assert outcome.counts.model_timeouts == 2
+
+
+async def test_nothing_is_called_once_the_caller_has_gone():
+    time = TimeBudget()
+    time.stop()
+    outcome, model, _ = await run([], time=time)
+
+    assert (outcome.result, outcome.error, outcome.finish) == (None, "disconnected", None)
+    assert model.calls == []
+
+
+async def test_retry_is_allowed_only_with_time_left():
+    granted = []
+
+    class Throttled(FakeModel):
+        async def ainvoke(self, messages, tools, force_tool=None, may_retry=lambda: False):
+            granted.append(may_retry())
+            return await super().ainvoke(messages, tools, force_tool)
+
+    clock = Clock()
+    time = TimeBudget(clock)
+    model = Throttled([reply(submit())])
+    outcome = await run_agent(model, FakeSource(), make_request(), time)
+    assert granted == [True] and outcome.counts.model_retries == 1
+
+    granted.clear()
+    clock.now = 17.5  # the call is then the forced submit, with 12.5 s to the hard limit
+    model = Throttled([reply(submit())])
+    await run_agent(model, FakeSource(), make_request(), time)
+    assert granted == [True]
+
+    granted.clear()
+    clock.now = 23  # 7 s left: too little for the final call, so no retry either
+    model = Throttled([])
+    outcome = await run_agent(model, FakeSource(), make_request(), time)
+    assert granted == [] and outcome.error == "timeout"

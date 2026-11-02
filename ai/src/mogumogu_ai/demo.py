@@ -144,7 +144,7 @@ def _meal(text: str) -> str | None:
 
 
 class DemoModel:
-    async def ainvoke(self, messages, tools, force_tool=None):
+    async def ainvoke(self, messages, tools, force_tool=None, may_retry=lambda: False):
         first = next(m.content for m in messages if isinstance(m, HumanMessage))
         message = first.split("<message>\n")[-1].split("\n</message>")[0]
         lowered = message.lower()

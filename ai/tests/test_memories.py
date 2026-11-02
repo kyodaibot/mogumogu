@@ -1,6 +1,6 @@
 import pytest
 
-from mogumogu_ai.agent import MAX_AGENT_STEPS, run_agent
+from mogumogu_ai.agent import MAX_TOOL_MODEL_CALLS, run_agent
 from mogumogu_ai.model import FakeModel, reply, tool_call
 from mogumogu_ai.prompt import first_message
 from mogumogu_ai.schemas import Memory
@@ -113,7 +113,7 @@ async def test_memory_next_to_submit_takes_one_model_call():
 
     assert outcome.error is None and outcome.result.reply == "覚えておきます。"
     assert outcome.memory_changes == [{"op": "create", "content": "辛いものが苦手"}]
-    assert len(model.calls) == 1 == outcome.steps
+    assert len(model.calls) == 1 == outcome.counts.model_calls
 
 
 async def test_failed_memory_goes_back_to_the_model():
@@ -130,12 +130,12 @@ async def test_failed_memory_goes_back_to_the_model():
 
 async def test_failed_memory_on_the_last_step_is_dropped():
     script = [
-        reply(tool_call("get_meals", from_date="2026-10-01", to_date=f"2026-10-0{i + 1}")) for i in range(MAX_AGENT_STEPS - 1)
+        reply(tool_call("get_meals", from_date="2026-10-01", to_date=f"2026-10-0{i + 1}")) for i in range(MAX_TOOL_MODEL_CALLS - 1)
     ]
     outcome, model = await run([*script, reply(remember(quote="激辛好き"), done())])
 
     assert outcome.error is None and outcome.memory_changes == []
-    assert len(model.calls) == MAX_AGENT_STEPS
+    assert len(model.calls) == MAX_TOOL_MODEL_CALLS
 
 
 async def test_memory_with_a_meal_change_waits_for_the_results():

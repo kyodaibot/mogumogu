@@ -85,7 +85,7 @@
 | 429 | `rate_limited` | 短时间内请求太多（限流，见 2.5），稍后可以重试；响应带 `Retry-After` 头（秒） |
 | 429 | `quota_exceeded` | 饮食助手今天的调用额度用完，次日恢复；响应带 `Retry-After` 头（秒，到次日 0 点）；用完的是用户自己的额度时带 `limit` |
 | 500 | `internal_error` | 服务端错误 |
-| 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效）。不计入调用额度，可以重试 |
+| 503 | `ai_unavailable` | 饮食助手这次没能回答（AI 服务不可用、超时或输出无效；Go 最多等 35 秒）。不计入调用额度，可以重试 |
 
 `details[].reason` 取值：
 

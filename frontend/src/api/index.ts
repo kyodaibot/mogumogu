@@ -171,6 +171,11 @@ export interface HistoryTurn {
   changes: HistoryChange[]
 }
 
+/** Longer than the backend's own limit (35 s), so its answer, even an
+ *  error, always arrives first; this only catches a lost connection
+ *  (docs/operations.md 6.11). */
+export const ASSISTANT_TIMEOUT_MS = 45_000
+
 let unauthorizedHandler: () => void = () => {}
 
 /** Registers what to do when the session turns out to be invalid. */
@@ -215,7 +220,9 @@ export const api = {
   /** `locale` is the interface language; the reply is written in it.
    *  `history` is the conversation so far, oldest first. */
   sendAssistantMessage: (date: string, message: string, locale: 'ja' | 'en', history: HistoryTurn[]) =>
-    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }),
+    req<AssistantReply>('POST', '/api/assistant/messages', { date, message, locale, history }, {
+      timeoutMs: ASSISTANT_TIMEOUT_MS,
+    }),
   /** Runs the changes at the indexes in `accepted`; the rest are skipped. */
   executeProposal: (id: number, accepted: number[]) =>
     req<{ results: ChangeResult[] }>('POST', `/api/assistant/proposals/${id}/execute`, { accepted }).then((r) => r.results),

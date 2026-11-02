@@ -125,7 +125,8 @@ function failureText(err: unknown): string {
     const a = t.value.assistant
     if (err.code === 'quota_exceeded') return quotaText(err.limit)
     if (err.code === 'rate_limited') return a.tooFast
-    if (err.code === 'ai_unavailable') return a.unavailable
+    // timeout: no answer within ASSISTANT_TIMEOUT_MS, so the connection was lost.
+    if (err.code === 'ai_unavailable' || err.code === 'timeout') return a.unavailable
     if (err.code === 'validation_failed') return a.tooLong(MAX_LENGTH)
   }
   return errorMessage(err)

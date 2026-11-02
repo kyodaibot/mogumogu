@@ -13,7 +13,9 @@ import (
 )
 
 // Timeout bounds one message, including every model call and tool query.
-const Timeout = 30 * time.Second
+// The AI service stops itself after 30 s (its TimeBudget), so this is longer:
+// its answer, even a timeout error, still arrives (docs/operations.md 6.11).
+const Timeout = 35 * time.Second
 
 const maxReplyBytes = 64 << 10
 

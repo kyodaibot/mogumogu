@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -99,16 +101,24 @@ def test_go_failure_is_503_and_not_logged_with_content(client, caplog):
 
     assert resp.status_code == 503
     assert resp.json() == {"error": "upstream_error"}
-    assert "result=error" in caplog.text
+    assert reply_line(caplog)["result"] == "error"
     assert "秘密のメッセージ" not in caplog.text
 
 
-def test_log_has_steps_and_tokens_but_no_content(client, caplog):
+def reply_line(caplog) -> dict:
+    """The one JSON line logged for the message."""
+    (line,) = [r.getMessage() for r in caplog.records if r.name == "mogumogu_ai.reply"]
+    return json.loads(line)
+
+
+def test_log_is_one_json_line_without_content(client, caplog):
     client(demo_model()).post("/internal/reply", json=body("秘密のメッセージ 何を食べたらいい？"))
 
-    assert "result=ok" in caplog.text
-    assert "steps=1" in caplog.text and "input_tokens=100" in caplog.text
-    assert "cache_read_tokens=0" in caplog.text and "cache_write_tokens=0" in caplog.text
+    line = reply_line(caplog)
+    assert line["msg"] == "reply" and line["result"] == "ok" and line["finish"] == "submitted"
+    assert line["model_calls"] == 1 and line["input_tokens"] == 100
+    assert line["model_timeouts"] == line["model_retries"] == line["go_timeouts"] == 0
+    assert line["cache_read_tokens"] == line["cache_write_tokens"] == 0
     assert "秘密のメッセージ" not in caplog.text and "照り焼き" not in caplog.text
 
 
@@ -175,3 +185,21 @@ def test_demo_model_records_a_meal_and_remembers_together(client):
 
     assert [c["op"] for c in data["changes"]] == ["create"]
     assert data["memory_changes"] == [{"op": "create", "content": "辛いものが苦手"}]
+
+
+@pytest.mark.anyio
+async def test_dropped_request_stops_the_time_budget(monkeypatch):
+    from mogumogu_ai import app as app_module
+    from mogumogu_ai.time_budget import TimeBudget
+
+    class Request:
+        def __init__(self):
+            self.checks = iter([False, False, True])
+
+        async def is_disconnected(self):
+            return next(self.checks)
+
+    monkeypatch.setattr(app_module, "DISCONNECT_POLL_S", 0)
+    time = TimeBudget()
+    await app_module._watch_disconnect(Request(), time)
+    assert time.timeout_for("final") is None
