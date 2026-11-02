@@ -107,6 +107,15 @@ export interface AssistantReply {
   proposal: Proposal | null
   /** Memories the assistant saved with this reply (Pro); empty without any. */
   memory_updates: MemoryUpdate[]
+  /** Web pages the reply cites (Pro); empty without any. Missing in replies
+   *  saved in the chat before sources existed. */
+  sources?: Source[]
+}
+
+/** A web page a reply cites (GLOSSARY: 来源). title may be empty. */
+export interface Source {
+  title: string
+  url: string
 }
 
 /** A memory (GLOSSARY: 记忆): a lasting preference the assistant keeps in mind. */

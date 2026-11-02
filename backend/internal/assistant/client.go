@@ -35,7 +35,9 @@ type Context struct {
 	AllowProposal bool `json:"allow_proposal"`
 	// Whether the assistant reads and changes the user's memories (Pro
 	// only). Memories is empty when it does not.
-	AllowMemory bool  `json:"allow_memory"`
+	AllowMemory bool `json:"allow_memory"`
+	// Whether the assistant may search the web (Pro only).
+	AllowSearch bool  `json:"allow_search"`
 	Memories    any   `json:"memories"`
 	Profile     any   `json:"profile"`
 	Events      any   `json:"events"`
@@ -116,6 +118,15 @@ type Reply struct {
 	// Changes to the user's memories; Go checks and saves them without a
 	// confirmation (plans/archive/memories.md).
 	MemoryChanges []MemoryChange `json:"memory_changes"`
+	// Web pages the reply cites (GLOSSARY: 来源). The AI service accepts only
+	// URLs its searches returned; Go checks them again before the browser
+	// gets them.
+	Sources []Source `json:"sources"`
+}
+
+type Source struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
 }
 
 // MemoryChange is one change to the user's memories.

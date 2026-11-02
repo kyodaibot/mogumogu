@@ -27,6 +27,7 @@ type fakeAI struct {
 	// Staged changes returned with the reply.
 	changes       []assistant.Change
 	memoryChanges []assistant.MemoryChange
+	sources       []assistant.Source
 	// Runs while the reply is being made, as if the user acted meanwhile.
 	during func()
 }
@@ -51,6 +52,7 @@ func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Repl
 		MealType:      &lunch,
 		Changes:       f.changes,
 		MemoryChanges: f.memoryChanges,
+		Sources:       f.sources,
 	}, nil
 }
 

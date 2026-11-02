@@ -454,3 +454,13 @@ async def test_retry_is_allowed_only_with_time_left():
     model = Throttled([])
     outcome = await run_agent(model, FakeSource(), make_request(), time)
     assert granted == [] and outcome.error == "timeout"
+
+
+async def test_nutrition_without_g_is_accepted():
+    # Seen from the real model: the numbers are fine, only the names lack _g.
+    unsuffixed = {"calories": 652, "protein": 35.4, "fat": 18, "carbs": 84.6}
+    recs = [{**RECS[0], "estimate": {**ESTIMATE, "serving": unsuffixed}}, RECS[1], RECS[2]]
+    outcome, _, _ = await run([reply(tool_call("submit_reply", reply="案：", recommendations=recs, meal_type="lunch"))])
+
+    assert not outcome.retried
+    assert outcome.result.recommendations[0].estimate.serving.protein_g == 35

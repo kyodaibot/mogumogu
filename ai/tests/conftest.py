@@ -22,6 +22,7 @@ def make_request(
     message: str = "今日の昼食は何を食べたらいい？", allergens: list[str] | None = None, locale: str = "ja",
     history: list[dict] | None = None, allow_proposal: bool = False,
     allow_memory: bool = False, memories: list[dict] | None = None, event_notes: str | None = None,
+    allow_search: bool = False,
 ) -> ReplyRequest:
     return ReplyRequest.model_validate({
         "message": message,
@@ -34,6 +35,7 @@ def make_request(
             "locale": locale,
             "allow_proposal": allow_proposal,
             "allow_memory": allow_memory,
+            "allow_search": allow_search,
             "memories": memories or [],
             "profile": {
                 "height_cm": 170, "weight_kg": 60, "age": 21, "has_exercise_habit": True,

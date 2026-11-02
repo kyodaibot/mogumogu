@@ -119,6 +119,8 @@ The first time the pre-commit gitleaks hook runs, it builds gitleaks with your l
 
    Then add `AWS_PROFILE=dev` (your profile name) to `.env`. When the credentials expire, the assistant reports that it is unavailable; run `aws login` again and restart the AI service. To work on the interface without the real model, set `MODEL_PROVIDER=fake` in `.env`: the AI service then returns fixed test replies.
 
+5. Web search for Pro users is off unless `.env` sets `SEARCH_PROVIDER`: `tavily` makes real searches with your own free-plan `TAVILY_API_KEY` (each search uses one credit), and `fake` returns fixed results without going online. See docs/operations.md 6.12.
+
 ## Running locally
 
 ### With make (recommended)

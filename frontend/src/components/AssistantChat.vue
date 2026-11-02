@@ -12,6 +12,7 @@ import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
 import ProposalCard from './ProposalCard.vue'
 import MemoryNote from './MemoryNote.vue'
+import SourceList from './SourceList.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
 // chat panel. The conversation is kept in this tab (lib/chatStore), so
@@ -272,6 +273,7 @@ watch(
             :today="today"
             @executed="emit('meals-changed')"
           />
+          <SourceList v-if="turn.reply.sources?.length" :sources="turn.reply.sources" />
           <MemoryNote v-if="turn.reply.memory_updates?.length" :updates="turn.reply.memory_updates" :undone="turn.undone" />
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
             <li v-for="q in mealQuestions(turn.date, today)" :key="q">

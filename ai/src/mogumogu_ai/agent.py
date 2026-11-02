@@ -9,6 +9,7 @@ How long each call may take is decided by TimeBudget (time_budget.py).
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Annotated, TypedDict
 
@@ -21,11 +22,15 @@ from pydantic import ValidationError
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
 from .schemas import ReplyRequest, SubmitReply
+from .search import SearchError, SearchProvider
 from .time_budget import TimeBudget
 from .tools import (
-    MEMORY_TOOLS, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY,
-    DataSource, MemoryChanges, QueryBudget, Staging, run_query, tools_for,
+    MEMORY_TOOLS, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY, WEB_SEARCH,
+    DataSource, MemoryChanges, QueryBudget, SearchBudget, Staging, run_query, run_search,
+    search_unavailable, tools_for,
 )
+
+log = logging.getLogger("mogumogu_ai")
 
 # Tools are allowed while fewer than this many model calls were made. With the
 # forced submit and the validation retry, a message makes at most 6 calls.
@@ -38,6 +43,8 @@ _TIME_UP = "Time is up; this was not run. Call submit_reply with what you alread
 _QUERY_NAMES = {t.name for t in QUERY_TOOLS}
 _STAGING_NAMES = {t.name for t in STAGING_TOOLS}
 _MEMORY_NAMES = {t.name for t in MEMORY_TOOLS}
+# Run in parallel, like the query tools.
+_FETCH_NAMES = _QUERY_NAMES | {WEB_SEARCH.name}
 
 
 class State(TypedDict):
@@ -57,6 +64,8 @@ class Counts:
     model_timeouts: int = 0
     model_retries: int = 0  # after throttling or a dropped connection
     go_timeouts: int = 0
+    searches: int = 0  # sent to the search provider, failed ones included
+    search_errors: int = 0  # timeouts included
 
 
 @dataclass
@@ -80,6 +89,8 @@ class Outcome:
     changes: list[dict] = field(default_factory=list)
     # Changes to memories (tools.MemoryChanges); empty without any.
     memory_changes: list[dict] = field(default_factory=list)
+    # The reply's sources with their titles: [{"title", "url"}].
+    sources: list[dict] = field(default_factory=list)
 
 
 def _cache_written(usage: dict) -> int:
@@ -89,12 +100,19 @@ def _cache_written(usage: dict) -> int:
     return sum(details.get(k, 0) for k in ("cache_creation", "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"))
 
 
-def check_reply(args: dict, allergens: list[str]) -> SubmitReply | str:
-    """Returns the parsed reply, or the reason it was rejected."""
+def check_reply(args: dict, allergens: list[str], found: dict[str, str] | None = None) -> SubmitReply | str:
+    """Returns the parsed reply, or the reason it was rejected. found holds
+    the URLs web_search returned in this message; a source must be one."""
     try:
         parsed = SubmitReply.model_validate(args)
     except ValidationError as e:
         return "; ".join(f"{'.'.join(map(str, err['loc'])) or 'arguments'}: {err['msg']}" for err in e.errors()[:3])
+    unknown = [u for u in parsed.sources if u not in (found or {})]
+    if unknown:
+        return (
+            f"sources: {unknown[0]} is not the url of a web_search result in this message; "
+            "copy urls exactly from the results, or leave sources empty"
+        )
     # Only the obvious case: the allergen's name appears in what is shown on the
     # card. An allergen written in another language than the reply (the user
     # typed "えび", the card says "shrimp") is not caught here; the prompt's
@@ -125,12 +143,18 @@ SYSTEM = SystemMessage([{"type": "text", "text": SYSTEM_PROMPT}, {"cachePoint": 
 def build_graph(
     model: ChatModel, source: DataSource, allergens: list[str], time: TimeBudget, counts: Counts,
     staging: Staging | None = None, memories: MemoryChanges | None = None,
+    search: SearchProvider | None = None, searches: SearchBudget | None = None,
 ):
     """staging is None when Go does not allow proposals, memories when it
-    does not allow memories; their tools are then not offered."""
+    does not allow memories, search when searching is not allowed or not set
+    up; their tools are then not offered."""
     budget = QueryBudget()
-    tools_offered = tools_for(staging is not None, memories is not None)
-    runnable = _QUERY_NAMES | (_STAGING_NAMES if staging else set()) | (_MEMORY_NAMES if memories else set())
+    searches = searches or SearchBudget()
+    tools_offered = tools_for(staging is not None, memories is not None, search is not None)
+    runnable = (
+        _QUERY_NAMES | (_STAGING_NAMES if staging else set()) | (_MEMORY_NAMES if memories else set())
+        | ({WEB_SEARCH.name} if search else set())
+    )
     # What memorize answered each memory call; validate repeats it.
     memory_answers: dict[str, str] = {}
 
@@ -194,10 +218,28 @@ def build_graph(
 
     seen_meals = staging.seen_meals if staging else None
 
+    async def web_search(call: dict) -> str:
+        timeout = time.timeout_for("search")
+        if timeout is None:
+            return _TIME_UP
+        try:
+            async with asyncio.timeout(timeout):
+                return await run_search(search, call["args"], searches)
+        except (SearchError, TimeoutError) as e:
+            counts.search_errors += 1
+            # Only why it failed: the query may contain anything the user wrote.
+            log.warning("web search failed: %s", e.reason if isinstance(e, SearchError) else "timeout")
+            return search_unavailable(searches)
+
+    async def fetch(call: dict) -> str:
+        return await (web_search(call) if call["name"] == WEB_SEARCH.name else query(call))
+
     async def tools(state: State):
         calls = state["messages"][-1].tool_calls
-        queries = [c for c in calls if c["name"] in _QUERY_NAMES]
-        answers = dict(zip((c["id"] for c in queries), await asyncio.gather(*(query(c) for c in queries))))
+        fetches = [c for c in calls if c["name"] in _FETCH_NAMES]
+        if any(c["name"] == WEB_SEARCH.name for c in fetches):
+            searches.rounds += 1
+        answers = dict(zip((c["id"] for c in fetches), await asyncio.gather(*(fetch(c) for c in fetches))))
         # After the queries, which may show the ids of the records to change.
         for c in calls:
             if c["name"] in _STAGING_NAMES:
@@ -256,7 +298,7 @@ def build_graph(
         finish = state["finish"] or "submitted"
         last = state["messages"][-1]
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
-        checked = check_reply(submit["args"], allergens) if submit else "submit_reply was not called"
+        checked = check_reply(submit["args"], allergens, searches.found) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
             return {"result": checked.rounded(), "finish": finish}
         if state["retried"]:
@@ -297,16 +339,21 @@ def build_graph(
 
 
 async def run_agent(
-    model: ChatModel, source: DataSource, req: ReplyRequest, time: TimeBudget | None = None
+    model: ChatModel, source: DataSource, req: ReplyRequest, time: TimeBudget | None = None,
+    search: SearchProvider | None = None,
 ) -> Outcome:
-    """Answers one message. Model and data-source errors propagate to the caller."""
+    """Answers one message. Model and data-source errors propagate to the
+    caller; search errors do not (the model answers without the results).
+    search is offered only when the context allows it."""
     time = time or TimeBudget()
     counts = Counts()
     profile = req.context.profile
     allergens = (profile.allergens or []) if profile else []
     staging = Staging((m.id for m in req.context.meals), allergens) if req.context.allow_proposal else None
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
-    graph = build_graph(model, source, allergens, time, counts, staging, memories)
+    searches = SearchBudget()
+    search = search if req.context.allow_search else None
+    graph = build_graph(model, source, allergens, time, counts, staging, memories, search, searches)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "out_of_time": False,
@@ -319,6 +366,8 @@ async def run_agent(
         final = await graph.ainvoke(init, {"recursion_limit": RECURSION_LIMIT})
     except GraphRecursionError:
         return Outcome(None, "recursion_limit", counts=counts)
+    finally:
+        counts.searches = searches.used
 
     error, finish = final["error"], final["finish"]
     if final["result"] is None and time.stopped:
@@ -336,4 +385,5 @@ async def run_agent(
         cache_write_tokens=sum(_cache_written(u) for u in usage),
         changes=staging.changes if staging and final["result"] else [],
         memory_changes=memories.changes if memories and final["result"] else [],
+        sources=[{"title": searches.found[u], "url": u} for u in final["result"].sources] if final["result"] else [],
     )

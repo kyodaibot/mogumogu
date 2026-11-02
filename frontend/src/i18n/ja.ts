@@ -165,6 +165,7 @@ export const ja: Messages = {
     turnLimit: (max: number) => `この会話は${max}回に達しました。続けるには新しい会話を始めてください。`,
     addToLog: '食事の記録に追加',
     added: '追加しました ✓',
+    sources: '出典',
     memoryNote: {
       updated: '記憶を更新しました',
       ops: { create: '覚えた', update: '変更', delete: '忘れた' },
