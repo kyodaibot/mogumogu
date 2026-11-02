@@ -149,6 +149,7 @@ export const ja: Messages = {
     limitReached: '今日の質問回数を使い切りました。また明日どうぞ。',
     ownLimitReached: (limit: number) => `今日の上限（${limit}回）に達しました。また明日どうぞ。`,
     tooFast: '短い時間に送信しすぎです。少し待ってから再試行してください。',
+    interrupted: '回答を受け取る前にページを離れました。もう一度送信してください。',
     unavailable: '食事アシスタントが回答できませんでした。もう一度お試しください。',
     tooLong: (max: number) => `メッセージは${max}文字までです。`,
     today: '今日',
