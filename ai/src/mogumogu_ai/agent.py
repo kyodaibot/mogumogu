@@ -1,6 +1,7 @@
 """The meal assistant's agent loop (project-review §4, docs/diagram/agent-loop.html).
 
 agent → route → tools → agent …
+              → memorize → validate, or → agent
               → validate → END, or once → force_finish → validate
               → force_finish → validate
 """
@@ -18,7 +19,10 @@ from pydantic import ValidationError
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
 from .schemas import ReplyRequest, SubmitReply
-from .tools import QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY, DataSource, QueryBudget, Staging, run_query, tools_for
+from .tools import (
+    MEMORY_TOOLS, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY,
+    DataSource, MemoryChanges, QueryBudget, Staging, run_query, tools_for,
+)
 
 # Query tools are allowed while fewer than this many model calls were made.
 MAX_AGENT_STEPS = 4
@@ -27,6 +31,7 @@ RECURSION_LIMIT = 20
 
 _QUERY_NAMES = {t.name for t in QUERY_TOOLS}
 _STAGING_NAMES = {t.name for t in STAGING_TOOLS}
+_MEMORY_NAMES = {t.name for t in MEMORY_TOOLS}
 
 
 class State(TypedDict):
@@ -48,6 +53,8 @@ class Outcome:
     output_tokens: int
     # Changes staged for a proposal (tools.Staging); empty without any.
     changes: list[dict] = field(default_factory=list)
+    # Changes to memories (tools.MemoryChanges); empty without any.
+    memory_changes: list[dict] = field(default_factory=list)
 
 
 def check_reply(args: dict, allergens: list[str]) -> SubmitReply | str:
@@ -75,12 +82,17 @@ def _answer_pending(last: AIMessage, text: str) -> list[AnyMessage]:
     return [ToolMessage(text, tool_call_id=call["id"]) for call in last.tool_calls]
 
 
-def build_graph(model: ChatModel, source: DataSource, allergens: list[str], staging: Staging | None = None):
-    """staging is None when Go does not allow proposals; the staging tools
-    are then not offered."""
+def build_graph(
+    model: ChatModel, source: DataSource, allergens: list[str],
+    staging: Staging | None = None, memories: MemoryChanges | None = None,
+):
+    """staging is None when Go does not allow proposals, memories when it
+    does not allow memories; their tools are then not offered."""
     budget = QueryBudget()
-    tools_offered = tools_for(staging is not None)
-    runnable = _QUERY_NAMES | (_STAGING_NAMES if staging else set())
+    tools_offered = tools_for(staging is not None, memories is not None)
+    runnable = _QUERY_NAMES | (_STAGING_NAMES if staging else set()) | (_MEMORY_NAMES if memories else set())
+    # What memorize answered each memory call; validate repeats it.
+    memory_answers: dict[str, str] = {}
 
     async def call_model(messages, force_tool=None) -> AIMessage:
         return await model.ainvoke([SystemMessage(SYSTEM_PROMPT), *messages], tools_offered, force_tool)
@@ -92,9 +104,15 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str], stag
     def route(state: State) -> str:
         names = {call["name"] for call in state["messages"][-1].tool_calls}
         can_run = state["steps"] < MAX_AGENT_STEPS
-        # Changes staged next to submit_reply are staged first, so they are
-        # not lost; the model submits again after seeing the results.
-        if can_run and names & _STAGING_NAMES and names - {SUBMIT_REPLY.name} <= runnable:
+        # Memories saved next to submit_reply need no second model call when
+        # they all pass: the reply already says what it saves.
+        others = names - {SUBMIT_REPLY.name}
+        if memories and SUBMIT_REPLY.name in names and others and others <= _MEMORY_NAMES:
+            return "memorize"
+        # Changes staged next to submit_reply (with a query or a meal change)
+        # are staged first, so they are not lost; the model submits again
+        # after seeing the results.
+        if can_run and names & (_STAGING_NAMES | _MEMORY_NAMES) and names - {SUBMIT_REPLY.name} <= runnable:
             return "tools"
         if SUBMIT_REPLY.name in names:
             return "validate"
@@ -114,9 +132,30 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str], stag
         for c in calls:
             if c["name"] in _STAGING_NAMES:
                 answers[c["id"]] = staging.stage(c["name"], c["args"])
+            elif c["name"] in _MEMORY_NAMES:
+                answers[c["id"]] = memories.stage(c["name"], c["args"])[0]
             elif c["name"] == SUBMIT_REPLY.name:
                 answers[c["id"]] = "Not submitted yet: read these results, then call submit_reply again."
         return {"messages": [ToolMessage(answers[c["id"]], tool_call_id=c["id"]) for c in calls]}
+
+    def memorize(state: State):
+        """Saves the memory calls made next to submit_reply. When one fails
+        and a step is left, the model sees the results and submits again."""
+        last = state["messages"][-1]
+        ok = True
+        for c in last.tool_calls:
+            if c["name"] in _MEMORY_NAMES:
+                memory_answers[c["id"]], passed = memories.stage(c["name"], c["args"])
+                ok = ok and passed
+        if ok or state["steps"] >= MAX_AGENT_STEPS:
+            return {}
+        not_yet = "Not submitted yet: read these results, then call submit_reply again."
+        return {"messages": [
+            ToolMessage(memory_answers.get(c["id"], not_yet), tool_call_id=c["id"]) for c in last.tool_calls
+        ]}
+
+    def after_memorize(state: State) -> str:
+        return "validate" if isinstance(state["messages"][-1], AIMessage) else "agent"
 
     async def force_finish(state: State):
         new: list[AnyMessage] = []
@@ -141,7 +180,7 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str], stag
         if submit:
             # Queries sent alongside submit_reply are ignored, not run.
             msgs = [
-                ToolMessage(feedback if c is submit else "Ignored.", tool_call_id=c["id"])
+                ToolMessage(feedback if c is submit else memory_answers.get(c["id"], "Ignored."), tool_call_id=c["id"])
                 for c in last.tool_calls
             ]
         else:
@@ -155,11 +194,13 @@ def build_graph(model: ChatModel, source: DataSource, allergens: list[str], stag
     g = StateGraph(State)
     g.add_node("agent", agent)
     g.add_node("tools", tools)
+    g.add_node("memorize", memorize)
     g.add_node("force_finish", force_finish)
     g.add_node("validate", validate)
     g.add_edge(START, "agent")
-    g.add_conditional_edges("agent", route, ["tools", "validate", "force_finish"])
+    g.add_conditional_edges("agent", route, ["tools", "memorize", "validate", "force_finish"])
     g.add_edge("tools", "agent")
+    g.add_conditional_edges("memorize", after_memorize, ["validate", "agent"])
     g.add_edge("force_finish", "validate")
     g.add_conditional_edges("validate", after_validate, [END, "force_finish"])
     return g.compile()
@@ -170,7 +211,8 @@ async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> 
     profile = req.context.profile
     allergens = (profile.allergens or []) if profile else []
     staging = Staging((m.id for m in req.context.meals), allergens) if req.context.allow_proposal else None
-    graph = build_graph(model, source, allergens, staging)
+    memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
+    graph = build_graph(model, source, allergens, staging, memories)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "steps": 0,
@@ -192,4 +234,5 @@ async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> 
         input_tokens=sum(u["input_tokens"] for u in usage),
         output_tokens=sum(u["output_tokens"] for u in usage),
         changes=staging.changes if staging and final["result"] else [],
+        memory_changes=memories.changes if memories and final["result"] else [],
     )

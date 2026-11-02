@@ -21,6 +21,7 @@ def turn(message: str, reply: str, *dishes: str, day: str = "2026-10-27") -> dic
 def make_request(
     message: str = "今日の昼食は何を食べたらいい？", allergens: list[str] | None = None, locale: str = "ja",
     history: list[dict] | None = None, allow_proposal: bool = False,
+    allow_memory: bool = False, memories: list[dict] | None = None, event_notes: str | None = None,
 ) -> ReplyRequest:
     return ReplyRequest.model_validate({
         "message": message,
@@ -32,13 +33,15 @@ def make_request(
             "timezone": "Asia/Tokyo",
             "locale": locale,
             "allow_proposal": allow_proposal,
+            "allow_memory": allow_memory,
+            "memories": memories or [],
             "profile": {
                 "height_cm": 170, "weight_kg": 60, "age": 21, "has_exercise_habit": True,
                 "allergens": allergens, "goal": "build_muscle",
             },
             "events": [{
                 "title": "授業", "starts_at": "2026-10-27T13:00:00+09:00",
-                "ends_at": "2026-10-27T16:00:00+09:00", "notes": None,
+                "ends_at": "2026-10-27T16:00:00+09:00", "notes": event_notes,
             }],
             "events_range": {"from": "2026-10-26", "to": "2026-10-28"},
             "meals": [{

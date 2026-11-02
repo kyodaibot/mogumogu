@@ -30,12 +30,16 @@ type Context struct {
 	Timezone   string `json:"timezone"`
 	Locale     string `json:"locale"` // the reply's language: "ja" or "en"
 	// Whether the assistant may stage changes to meal records (Pro only).
-	AllowProposal bool  `json:"allow_proposal"`
-	Profile       any   `json:"profile"`
-	Events        any   `json:"events"`
-	EventsRange   Range `json:"events_range"`
-	Meals         any   `json:"meals"`
-	MealsRange    Range `json:"meals_range"`
+	AllowProposal bool `json:"allow_proposal"`
+	// Whether the assistant reads and changes the user's memories (Pro
+	// only). Memories is empty when it does not.
+	AllowMemory bool  `json:"allow_memory"`
+	Memories    any   `json:"memories"`
+	Profile     any   `json:"profile"`
+	Events      any   `json:"events"`
+	EventsRange Range `json:"events_range"`
+	Meals       any   `json:"meals"`
+	MealsRange  Range `json:"meals_range"`
 }
 
 type Request struct {
@@ -107,6 +111,18 @@ type Reply struct {
 	// Changes to meal records the assistant staged; Go checks and saves them
 	// as a proposal. Empty when it staged none.
 	Changes []Change `json:"changes"`
+	// Changes to the user's memories; Go checks and saves them without a
+	// confirmation (plans/memories.md).
+	MemoryChanges []MemoryChange `json:"memory_changes"`
+}
+
+// MemoryChange is one change to the user's memories.
+type MemoryChange struct {
+	Op string `json:"op"` // create, update or delete
+	// The memory to update or delete.
+	MemoryID *int64 `json:"memory_id"`
+	// create, update: the memory's new text.
+	Content *string `json:"content"`
 }
 
 // Change is one staged change to the user's meal records (project-review 4).

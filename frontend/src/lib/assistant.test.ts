@@ -74,6 +74,7 @@ describe('conversation history', () => {
     ask_meal_type: false,
     meal_type: dishes.length ? 'lunch' : null,
     proposal: null,
+    memory_updates: [],
   })
   const done = (text: string, r: AssistantReply, date = '2026-10-31'): SentTurn => ({ date, text, status: 'done', reply: r })
 

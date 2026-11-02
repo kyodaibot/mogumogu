@@ -131,6 +131,8 @@ type assistantReplyJSON struct {
 	MealType        *string                    `json:"meal_type"`
 	// The changes to meal records the assistant proposes; null without any.
 	Proposal *proposalJSON `json:"proposal"`
+	// The memories the assistant saved with this reply; empty without any.
+	MemoryUpdates []memoryUpdateJSON `json:"memory_updates"`
 }
 
 // postAssistantMessage answers one message to the meal assistant
@@ -200,7 +202,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		return
 	}
 
-	reply, err := a.askAssistant(ctx, user, target, message, locale, history, now)
+	reply, memories, err := a.askAssistant(ctx, user, target, message, locale, history, now)
 	var proposal *proposalJSON
 	if err == nil {
 		proposal, err = a.saveProposal(ctx, user, reply.Changes)
@@ -215,15 +217,19 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		abortError(c, http.StatusServiceUnavailable, "ai_unavailable", "The meal assistant is unavailable. Try again later.")
 		return
 	}
+	// Only once the message is answered, so a refunded message saves nothing.
+	updates := a.saveMemories(ctx, user, reply.MemoryChanges, memories)
 	c.JSON(http.StatusOK, assistantReplyJSON{
 		Reply: reply.Reply, Recommendations: reply.Recommendations,
 		AskMealType: reply.AskMealType, MealType: reply.MealType, Proposal: proposal,
+		MemoryUpdates: updates,
 	})
 }
 
 // askAssistant assembles the initial context (project-review 3.6) and calls
-// the AI service.
-func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, error) {
+// the AI service. It also returns the memories in that context, which the
+// memory changes in the reply are checked against.
+func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, []store.Memory, error) {
 	userID := user.ID
 	var profile any
 	p, err := a.store.GetProfile(ctx, userID)
@@ -231,14 +237,27 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 	case err == nil:
 		profile = toProfileJSON(p)
 	case !errors.Is(err, store.ErrNotFound):
-		return assistant.Reply{}, err
+		return assistant.Reply{}, nil, err
+	}
+
+	// A downgraded user keeps their memories, but they are not used.
+	pro := user.Tier == store.TierPro
+	var memories []store.Memory
+	if pro {
+		if memories, err = a.store.ListMemories(ctx, userID); err != nil {
+			return assistant.Reply{}, nil, err
+		}
+	}
+	memoryItems := make([]contextMemory, 0, len(memories))
+	for _, m := range memories {
+		memoryItems = append(memoryItems, contextMemory{ID: m.ID, Content: m.Content})
 	}
 
 	evFrom, evTo := target.AddDays(-1), target.AddDays(1)
 	start, end := tz.RangeBounds(evFrom, evTo)
 	events, err := a.store.ListEvents(ctx, userID, start, end)
 	if err != nil {
-		return assistant.Reply{}, err
+		return assistant.Reply{}, nil, err
 	}
 	eventItems := make([]eventJSON, 0, len(events))
 	for _, e := range events {
@@ -253,14 +272,14 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 	mealFrom := mealTo.AddDays(-(mealWindowDays - 1))
 	meals, err := a.store.ListMeals(ctx, userID, mealFrom.Time(), mealTo.Time())
 	if err != nil {
-		return assistant.Reply{}, err
+		return assistant.Reply{}, nil, err
 	}
 	mealItems := make([]mealJSON, 0, len(meals))
 	for _, m := range meals {
 		mealItems = append(mealItems, toMealJSON(m))
 	}
 
-	return a.assistant.Reply(ctx, assistant.Request{
+	reply, err := a.assistant.Reply(ctx, assistant.Request{
 		Message: message,
 		History: history,
 		Token:   a.agentTokens.Issue(userID),
@@ -270,14 +289,18 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 			Timezone:   tz.Tokyo.String(),
 			Locale:     locale,
 			// Checked again when the reply comes back and when the proposal runs.
-			AllowProposal: user.Tier == store.TierPro,
-			Profile:       profile,
-			Events:        eventItems,
-			EventsRange:   assistant.Range{From: evFrom.String(), To: evTo.String()},
-			Meals:         mealItems,
-			MealsRange:    assistant.Range{From: mealFrom.String(), To: mealTo.String()},
+			AllowProposal: pro,
+			// Checked again when the reply comes back.
+			AllowMemory: pro,
+			Memories:    memoryItems,
+			Profile:     profile,
+			Events:      eventItems,
+			EventsRange: assistant.Range{From: evFrom.String(), To: evTo.String()},
+			Meals:       mealItems,
+			MealsRange:  assistant.Range{From: mealFrom.String(), To: mealTo.String()},
 		},
 	})
+	return reply, memories, err
 }
 
 // --- internal API for the agent's query tools ---

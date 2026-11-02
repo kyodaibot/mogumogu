@@ -20,6 +20,8 @@ export const router = createRouter({
     { path: '/login', component: LoginPage, meta: { public: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
+  // A link such as /profile#memories opens that section.
+  scrollBehavior: (to) => (to.hash ? { el: to.hash } : undefined),
 })
 
 router.beforeEach(async (to) => {
