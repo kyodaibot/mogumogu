@@ -5,6 +5,7 @@ import { api, ApiError, type Goal, type Profile } from '../api'
 import { session } from '../session'
 import { errorMessage, fieldMessages } from '../lib/messages'
 import { t } from '../i18n'
+import MemoryList from '../components/MemoryList.vue'
 
 const router = useRouter()
 
@@ -192,6 +193,9 @@ onMounted(load)
         {{ saving ? t.common.saving : isNew ? t.profile.saveAndStart : t.common.save }}
       </button>
     </form>
+
+    <!-- Memories have their own save buttons, outside the profile form. -->
+    <MemoryList v-if="!isNew" />
   </main>
 </template>
 

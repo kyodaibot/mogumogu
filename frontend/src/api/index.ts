@@ -105,6 +105,25 @@ export interface AssistantReply {
   meal_type: MealType | null
   /** Changes to the meal log the assistant proposes (Pro); null without any. */
   proposal: Proposal | null
+  /** Memories the assistant saved with this reply (Pro); empty without any. */
+  memory_updates: MemoryUpdate[]
+}
+
+/** A memory (GLOSSARY: 记忆): a lasting preference the assistant keeps in mind. */
+export interface Memory {
+  id: number
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+/** One memory the assistant changed. content is the memory after a create or
+ *  update, and the one removed by a delete; before is what an update replaced. */
+export interface MemoryUpdate {
+  op: ChangeOp
+  id: number
+  content: string
+  before: string | null
 }
 
 export type ChangeOp = 'create' | 'update' | 'delete'
@@ -187,6 +206,11 @@ export const api = {
   createMeal: (m: MealRecordInput) => req<MealRecord>('POST', '/api/meal-records', m),
   updateMeal: (id: number, m: MealRecordInput) => req<MealRecord>('PUT', `/api/meal-records/${id}`, m),
   deleteMeal: (id: number) => req<void>('DELETE', `/api/meal-records/${id}`),
+
+  listMemories: () => req<{ items: Memory[] }>('GET', '/api/memories').then((r) => r.items),
+  createMemory: (content: string) => req<Memory>('POST', '/api/memories', { content }),
+  updateMemory: (id: number, content: string) => req<Memory>('PUT', `/api/memories/${id}`, { content }),
+  deleteMemory: (id: number) => req<void>('DELETE', `/api/memories/${id}`),
 
   /** `locale` is the interface language; the reply is written in it.
    *  `history` is the conversation so far, oldest first. */

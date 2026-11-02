@@ -41,6 +41,14 @@ class Meal(BaseModel):
     carbs_g: float | None = None
 
 
+class Memory(BaseModel):
+    """A memory (GLOSSARY: 记忆): a lasting preference or fact the user stated.
+    update_memory and forget name one by its id."""
+
+    id: int
+    content: str
+
+
 class DateRange(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -58,6 +66,9 @@ class Context(BaseModel):
     locale: Literal["ja", "en"] = "en"
     # Whether the staging tools are offered (Pro only).
     allow_proposal: bool = False
+    # Whether the memory tools are offered (Pro only); memories is empty otherwise.
+    allow_memory: bool = False
+    memories: list[Memory] = Field(default_factory=list)
     profile: Profile | None
     events: list[Event]
     events_range: DateRange
@@ -259,7 +270,9 @@ class SubmitReply(BaseModel):
 
 
 class Reply(SubmitReply):
-    """Body of the response to Go: the reply and the changes staged with it
-    (tools.Staging), which Go checks and saves as a proposal."""
+    """Body of the response to Go: the reply, the changes staged with it
+    (tools.Staging), which Go checks and saves as a proposal, and the changes
+    to memories (tools.MemoryChanges), which Go checks and saves at once."""
 
     changes: list[dict] = Field(default_factory=list)
+    memory_changes: list[dict] = Field(default_factory=list)

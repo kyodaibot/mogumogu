@@ -143,3 +143,34 @@ def test_demo_model_says_recording_is_pro_only(client):
 
     assert "Pro" in data["reply"]
     assert data["changes"] == []
+
+
+def test_demo_model_remembers_for_pro(client):
+    req = make_request("辛いものが苦手って覚えて", allow_memory=True).model_dump(mode="json", by_alias=True)
+    data = client(demo_model()).post("/internal/reply", json=req).json()
+
+    assert data["reply"] == "（テスト回答）覚えておきます。"
+    assert data["memory_changes"] == [{"op": "create", "content": "辛いものが苦手"}]
+
+
+def test_demo_model_forgets_every_memory(client):
+    memories = [{"id": 3, "content": "辛いものが苦手"}, {"id": 4, "content": "魚が好き"}]
+    req = make_request("全部忘れて", allow_memory=True, memories=memories).model_dump(mode="json", by_alias=True)
+    data = client(demo_model()).post("/internal/reply", json=req).json()
+
+    assert data["memory_changes"] == [{"op": "delete", "memory_id": 3}, {"op": "delete", "memory_id": 4}]
+
+
+def test_demo_model_says_memory_is_pro_only(client):
+    data = client(demo_model()).post("/internal/reply", json=body("辛いものが苦手って覚えて")).json()
+
+    assert "Pro" in data["reply"]
+    assert data["memory_changes"] == []
+
+
+def test_demo_model_records_a_meal_and_remembers_together(client):
+    req = make_request("昼食にラーメンを食べた、辛いものが苦手って覚えて", allow_proposal=True, allow_memory=True)
+    data = client(demo_model()).post("/internal/reply", json=req.model_dump(mode="json", by_alias=True)).json()
+
+    assert [c["op"] for c in data["changes"]] == ["create"]
+    assert data["memory_changes"] == [{"op": "create", "content": "辛いものが苦手"}]

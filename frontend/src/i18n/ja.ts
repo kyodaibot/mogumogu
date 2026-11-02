@@ -101,6 +101,19 @@ export const ja: Messages = {
     saved: '保存しました。',
     saveAndStart: '保存して始める',
   },
+  memories: {
+    title: '覚えていること',
+    lead: '食事アシスタントが覚えておく、長く変わらない好みです（例：辛いものが苦手）。チャットで話すと自動で保存されます。ここで追加・編集・削除もできます。',
+    proOnly: '好みを覚えるのは Pro の機能です。保存済みの内容は確認・削除できます。',
+    empty: 'まだありません。食事アシスタントに「辛いものが苦手なんだ」のように話してみてください。',
+    addLabel: '新しく覚えること',
+    addPlaceholder: '例：辛いものが苦手',
+    add: '追加',
+    count: (n: number, max: number) => `${n} / ${max}`,
+    duplicate: 'すでに同じ内容があります。',
+    full: (max: number) => `覚えられるのは ${max} 件までです。先にどれかを削除してください。`,
+    tooLong: (max: number) => `1 行、${max} 文字以内で入力してください。`,
+  },
   eventForm: {
     editTitle: '予定を編集',
     newTitle: '予定を追加',
@@ -151,6 +164,13 @@ export const ja: Messages = {
     turnLimit: (max: number) => `この会話は${max}回に達しました。続けるには新しい会話を始めてください。`,
     addToLog: '食事の記録に追加',
     added: '追加しました ✓',
+    memoryNote: {
+      updated: '記憶を更新しました',
+      ops: { create: '覚えた', update: '変更', delete: '忘れた' },
+      undo: '取り消す',
+      undone: '取り消しました',
+      manage: '覚えていることを見る',
+    },
     proposal: {
       title: '食事の記録の変更',
       hint: '「実行」するまで保存されません。不要なものはチェックを外してください。',

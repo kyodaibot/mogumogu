@@ -83,8 +83,11 @@ async def reply(req: ReplyRequest, request: Request):
         return JSONResponse({"error": outcome.error}, status_code=503)
 
     _log("ok", started, steps=outcome.steps, retried=outcome.retried, changes=len(outcome.changes),
+         memory_changes=len(outcome.memory_changes),
          input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens)
-    return Reply.model_construct(**dict(outcome.result), changes=outcome.changes)
+    return Reply.model_construct(
+        **dict(outcome.result), changes=outcome.changes, memory_changes=outcome.memory_changes
+    )
 
 
 def _log(result: str, started: float, **fields) -> None:

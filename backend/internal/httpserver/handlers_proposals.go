@@ -180,7 +180,6 @@ type executeInput struct {
 
 // executeProposal runs a proposal once the user confirms it (docs/api.md 9.4).
 func (a *api) executeProposal(c *gin.Context) {
-	sess, _ := sessionOf(c)
 	id, ok := parseID(c)
 	if !ok {
 		return
@@ -203,18 +202,12 @@ func (a *api) executeProposal(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
 	// A downgraded user cannot run proposals made while they were Pro.
-	user, err := a.store.UserByID(ctx, sess.UserID)
-	if err != nil {
-		abortInternal(c, a.logger, err)
+	user, ok := a.requirePro(c)
+	if !ok {
 		return
 	}
-	if user.Tier != store.TierPro {
-		abortError(c, http.StatusForbidden, "pro_required", "This feature needs a Pro account.")
-		return
-	}
-	p, err := a.store.ExecuteProposal(ctx, user.ID, id, accepted, time.Now().Add(-proposalTTL))
+	p, err := a.store.ExecuteProposal(c.Request.Context(), user.ID, id, accepted, time.Now().Add(-proposalTTL))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		abortNotFound(c)

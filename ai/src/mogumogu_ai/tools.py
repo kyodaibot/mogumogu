@@ -3,10 +3,14 @@
 Query tools read data from Go's internal API (docs/adr/0001). Staging tools
 write nothing: they collect changes to meal records, which Go saves as a
 proposal and runs only when the user confirms (plans/change-proposals.md).
+Memory tools write nothing either: they collect changes to the user's
+memories, which Go saves with the reply, without a confirmation
+(plans/memories.md).
 """
 
 import datetime
 import json
+import unicodedata
 from collections.abc import Iterable
 from datetime import date, timedelta
 from typing import Protocol
@@ -15,12 +19,15 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from .model import ToolSpec
-from .schemas import MealType, ServingNutrition, SubmitReply
+from .schemas import MealType, Memory, ServingNutrition, SubmitReply
 
 MAX_SPAN_DAYS = 31
 MAX_RESULT_CHARS = 3000
 # Changes one reply may stage; Go has the same limit.
 MAX_CHANGES = 10
+# Memories a user may keep, and the length of one; Go has the same limits.
+MAX_MEMORIES = 30
+MAX_MEMORY_CHARS = 100
 
 # Fields the model does not need; dropped to save tokens. Meals keep their id,
 # which update_meal and delete_meal take.
@@ -80,13 +87,51 @@ UPDATE_MEAL = ToolSpec(
 )
 DELETE_MEAL = ToolSpec("delete_meal", "Stage deleting one meal record." + _STAGED, DeleteMealArgs)
 
+_QUOTE = Field(
+    min_length=2, max_length=500,
+    description="The user's own words in <message> this comes from, copied exactly",
+)
+_MEMORY_CONTENT = Field(
+    min_length=1, max_length=MAX_MEMORY_CHARS,
+    description="One short sentence in the user's language, such as 辛いものが苦手",
+)
+
+
+class RememberArgs(BaseModel):
+    content: str = _MEMORY_CONTENT
+    quote: str = _QUOTE
+
+
+class UpdateMemoryArgs(BaseModel):
+    memory_id: int = Field(description="id of a memory in <context> memories")
+    content: str = _MEMORY_CONTENT
+    quote: str = _QUOTE
+
+
+class ForgetArgs(BaseModel):
+    memory_id: int = Field(description="id of a memory in <context> memories")
+    quote: str = _QUOTE
+
+
+_SAVED = " It is saved with your reply; the user sees it under the reply and can undo it."
+REMEMBER = ToolSpec("remember", "Save a new memory: a lasting preference or fact the user stated." + _SAVED, RememberArgs)
+UPDATE_MEMORY = ToolSpec("update_memory", "Replace the text of one memory." + _SAVED, UpdateMemoryArgs)
+FORGET = ToolSpec("forget", "Delete one memory." + _SAVED, ForgetArgs)
+
 QUERY_TOOLS = (GET_MEALS, GET_EVENTS)
 STAGING_TOOLS = (CREATE_MEAL, UPDATE_MEAL, DELETE_MEAL)
+MEMORY_TOOLS = (REMEMBER, UPDATE_MEMORY, FORGET)
 
 
-def tools_for(allow_proposal: bool) -> tuple[ToolSpec, ...]:
-    """The tools offered to the model; staging tools only when Go allows it."""
-    return (*QUERY_TOOLS, *(STAGING_TOOLS if allow_proposal else ()), SUBMIT_REPLY)
+def tools_for(allow_proposal: bool, allow_memory: bool = False) -> tuple[ToolSpec, ...]:
+    """The tools offered to the model; staging and memory tools only when Go
+    allows them."""
+    return (
+        *QUERY_TOOLS,
+        *(STAGING_TOOLS if allow_proposal else ()),
+        *(MEMORY_TOOLS if allow_memory else ()),
+        SUBMIT_REPLY,
+    )
 
 
 class DataSource(Protocol):
@@ -237,3 +282,77 @@ class Staging:
 
 def _nutrition(n: ServingNutrition | None) -> dict | None:
     return n.rounded().model_dump() if n else None
+
+
+def _normalized(text: str) -> str:
+    # Full- and half-width forms, case and spacing do not matter for a quote.
+    return "".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+class MemoryChanges:
+    """The changes to memories made while answering one message.
+
+    Only the user's own words in this message can be the source of a memory:
+    every change quotes them, and the quote must be found in the message. Text
+    in event notes, meal records or the history therefore cannot add or
+    change a memory, even if the model is fooled by it. Go checks every
+    change again before saving it.
+    """
+
+    def __init__(self, memories: Iterable[Memory], message: str):
+        # The memories as they will be after the changes so far: id -> content.
+        self.current = {m.id: m.content for m in memories}
+        self.message = _normalized(message)
+        self.changes: list[dict] = []
+        self._changed_ids: set[int] = set()
+
+    def stage(self, name: str, args: dict) -> tuple[str, bool]:
+        """Takes one tool call; returns the text sent back to the model and
+        whether the change was accepted."""
+        spec = next(t for t in MEMORY_TOOLS if t.name == name)
+        try:
+            parsed = spec.args.model_validate(args)
+        except ValidationError as e:
+            errors = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()[:3])
+            return f"Not saved. Invalid arguments: {errors}", False
+        if _normalized(parsed.quote) not in self.message:
+            return (
+                "Not saved: quote is not in <message>. Memories come only from what the user wrote in this "
+                "message; copy their words exactly, or do not save anything", False
+            )
+        if len(self.changes) >= MAX_MEMORIES:
+            return f"Not saved: one reply can change at most {MAX_MEMORIES} memories", False
+
+        content = getattr(parsed, "content", "").strip()
+        if any(unicodedata.category(c) == "Cc" for c in content):
+            return "Not saved: write the memory on one line", False
+        others = set(self.current.values())
+        if isinstance(parsed, RememberArgs):
+            if content in others:
+                return "Not saved: this memory already exists", False
+            if len(self.current) >= MAX_MEMORIES:
+                return (
+                    f"Not saved: the user already has {MAX_MEMORIES} memories. Tell them to delete some on the "
+                    "Profile page first", False
+                )
+            self.current[-len(self.changes) - 1] = content
+            self.changes.append({"op": "create", "content": content})
+            return "Saved." + _SAVED, True
+
+        memory_id = parsed.memory_id
+        if memory_id not in self.current or memory_id < 0:
+            return f"Not saved: there is no memory with id {memory_id} in <context> memories", False
+        if memory_id in self._changed_ids:
+            return f"Not saved: memory {memory_id} is already changed; one change per memory", False
+        if isinstance(parsed, UpdateMemoryArgs):
+            if content == self.current[memory_id]:
+                return "Not saved: the text is the same as before", False
+            if content in others:
+                return "Not saved: another memory already says this; forget this one instead", False
+            self.current[memory_id] = content
+            self.changes.append({"op": "update", "memory_id": memory_id, "content": content})
+        else:
+            del self.current[memory_id]
+            self.changes.append({"op": "delete", "memory_id": memory_id})
+        self._changed_ids.add(memory_id)
+        return "Saved." + _SAVED, True

@@ -9,6 +9,7 @@ import { locale, t } from '../i18n'
 import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
 import ProposalCard from './ProposalCard.vue'
+import MemoryNote from './MemoryNote.vue'
 
 // The meal assistant (project-review 3.6): a floating button that opens a
 // chat panel. The conversation lives only in this component, so closing the
@@ -33,6 +34,8 @@ interface Turn {
   added?: number[]
   /** The state of the reply's change proposal card, if it has one. */
   proposal?: ProposalState
+  /** Ids of memories saved with the reply that the user undid. */
+  undone: number[]
 }
 
 const open = ref(false)
@@ -97,7 +100,7 @@ async function closePanel() {
 function send(text: string, date: Ymd = props.date): boolean {
   text = text.trim()
   if (!text || busy.value || full.value) return false
-  turns.value.push({ id: nextId++, date, text, status: 'pending' })
+  turns.value.push({ id: nextId++, date, text, status: 'pending', undone: [] })
   // Work on the reactive copy, so updates to it re-render.
   void ask(turns.value[turns.value.length - 1])
   return true
@@ -278,6 +281,7 @@ watch(
             :today="today"
             @executed="emit('meals-changed')"
           />
+          <MemoryNote v-if="turn.reply.memory_updates?.length" :updates="turn.reply.memory_updates" :undone="turn.undone" />
           <ul v-if="turn.reply.ask_meal_type" class="presets follow-up" :aria-label="t.assistant.chooseMeal">
             <li v-for="q in mealQuestions(turn.date, today)" :key="q">
               <button type="button" class="chip" :disabled="busy || full" @click="send(q, turn.date)">{{ q }}</button>
