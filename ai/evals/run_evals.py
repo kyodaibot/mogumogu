@@ -340,7 +340,7 @@ CASES = [
 async def main() -> int:
     model = BedrockModel(os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID), os.environ.get("AWS_REGION", "ap-northeast-1"))
     failed = 0
-    tokens = {False: [], True: []}  # without / with history: (input, output) per case
+    tokens = {False: [], True: []}  # without / with history: (input, output, cache read, cache write) per case
     # Names on the command line run only those cases.
     cases = [c for c in CASES if not sys.argv[1:] or c.name in sys.argv[1:]]
     for case in cases:
@@ -349,10 +349,12 @@ async def main() -> int:
         ms = round((time.monotonic() - started) * 1000)
         problem = outcome.error or case.check(outcome, case.source) or in_language(outcome, case.req.context.locale)
         failed += problem is not None
-        tokens[bool(case.req.history)].append((outcome.input_tokens, outcome.output_tokens))
+        tokens[bool(case.req.history)].append(
+            (outcome.input_tokens, outcome.output_tokens, outcome.cache_read_tokens, outcome.cache_write_tokens))
         print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.steps} 步"
               + ("（校验后重试）" if outcome.retried else "") + ", "
               f"输入 {outcome.input_tokens} / 输出 {outcome.output_tokens} token"
+              f"（缓存写入 {outcome.cache_write_tokens} / 命中 {outcome.cache_read_tokens}）"
               + (f"  ← {problem}" if problem else ""))
         if outcome.result:
             print(f"      回复：{outcome.result.reply}")
@@ -369,8 +371,20 @@ async def main() -> int:
             print("      查询：" + ", ".join(f"{k} {a}~{b}" for k, a, b in case.source.calls))
     for with_history, used in tokens.items():
         if used:
-            print(f"\n{'带历史' if with_history else '不带历史'}：{len(used)} 条，平均输入 "
-                  f"{sum(i for i, _ in used) // len(used)} / 输出 {sum(o for _, o in used) // len(used)} token")
+            n = len(used)
+            print(f"\n{'带历史' if with_history else '不带历史'}：{n} 条，平均输入 "
+                  f"{sum(u[0] for u in used) // n} / 输出 {sum(u[1] for u in used) // n} token，"
+                  f"缓存写入 {sum(u[3] for u in used) // n} / 命中 {sum(u[2] for u in used) // n}")
+    # Share of all input tokens read from the cache; cached prefixes are
+    # written by the first case of each tier and read by the rest.
+    used = [u for us in tokens.values() for u in us]
+    total_in = sum(u[0] for u in used)
+    if total_in:
+        read, write = sum(u[2] for u in used), sum(u[3] for u in used)
+        # Writes cost 1.25x the input price and reads 0.1x.
+        billed = total_in - read - write + 1.25 * write + 0.1 * read
+        print(f"缓存命中率：{read / total_in:.0%}（命中 token ÷ 全部输入 token）；"
+              f"输入计费量折合 {billed:,.0f} token，不缓存时 {total_in:,} token（{billed / total_in - 1:+.0%}）")
     print(f"\n{len(cases) - failed}/{len(cases)} passed")
     return 1 if failed else 0
 

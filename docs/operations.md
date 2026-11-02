@@ -214,7 +214,8 @@ AWS_PROFILE=Teiyou aws ssm start-session --region ap-northeast-1 \
 所有容器的日志都写入 CloudWatch Logs 的日志组 `/mogumogu/app`，保留 14 天（`infra/main/logs.tf`）。每个容器一个日志流，名字是「容器名/容器 ID」，例如 `mogumogu-web-1/3f2a…`。几种日志的格式：
 - **web（nginx）**：每个请求一行 JSON，字段为 `time`、`remote_addr`（客户端 IP）、`method`、`path`（不含查询参数）、`status`、`duration_s`。只有这种日志带 `remote_addr`，统计访问量时用它来筛选。
 - **backend**：slog 输出的 JSON，请求日志的 `msg` 为 `request`，字段为 `method`、`path`、`status`、`duration_ms`；错误日志的 `level` 为 `ERROR` 或 `WARN`。
-- **ai、caddy、migrate**：普通文本或各自的 JSON。
+- **ai**：每条消息一行文本，形如 `reply result=ok ms=… steps=… input_tokens=… output_tokens=… cache_read_tokens=… cache_write_tokens=…`。`input_tokens` 包括缓存部分；`cache_read_tokens` 为 0 而 `cache_write_tokens` 不为 0，说明这次写入了缓存（之前 5 分钟内没有同等级的请求）。不记录消息内容和模型输出。
+- **caddy、migrate**：普通文本或各自的 JSON。
 
 **在终端实时查看：**
 
