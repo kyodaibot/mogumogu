@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// A proposal holds at most this many changes (plans/change-proposals.md).
+	// A proposal holds at most this many changes (plans/archive/change-proposals.md).
 	maxProposalChanges = 10
 	// A proposal can run for this long after the reply that made it.
 	proposalTTL = 2 * time.Hour

@@ -1,6 +1,6 @@
 # 记忆：跨对话保存用户的长期偏好（Pro）
 
-> 状态：**已实现，待合并**（2026-11-02）。plans/roadmap-tiers.md 路线图第 4 步，**只对 Pro 开放**。
+> 状态：**已完成**（2026-11-02 实施并合并到 dev；上线后按「验收标准」在线上检查一次）。plans/archive/roadmap-tiers.md 路线图第 4 步，**只对 Pro 开放**。
 
 术语见 GLOSSARY.md（记忆、对话历史、变更提案、账号等级）。
 
@@ -95,7 +95,7 @@
 1. Go：`memories` 表和迁移；管理接口；上下文中的记忆和 `allow_memory`；校验和写入、审计日志、`memory_updates`；集成测试。
 2. Python：3 个记忆工具；检查（原话、id、重复、上限）；只有记忆时的一次提交；提示词新增一节；假模型能保存记忆；单元测试。
 3. 前端：Profile 页「覚えていること」；回复下方的提示和 ❌；i18n；Vitest、E2E。
-4. 文档与评估：GLOSSARY.md（已加「记忆」）、docs/api.md、docs/project-review.md、plans/roadmap-tiers.md（改掉被推翻的两条决定）；评估用例（见验收标准 5）。
+4. 文档与评估：GLOSSARY.md（已加「记忆」）、docs/api.md、docs/project-review.md、plans/archive/roadmap-tiers.md（改掉被推翻的两条决定）；评估用例（见验收标准 5）。
 
 ## 验收标准
 
@@ -123,7 +123,7 @@
 ## 需要修改的长期约定（实施时同步更新）
 
 - docs/project-review.md：「对话中的临时条件不写入任何数据，也不自动保存为用户偏好」改为「临时条件不保存；用户本人说出的长期偏好在 Pro 中自动保存为记忆，可以查看和删除」；第 10 节「从对话中自动保存用户偏好」移出「不做」；第 4 节加记忆工具、原话检查、一次提交；第 7 节加 `memories` 表和「覚えていること」。
-- plans/roadmap-tiers.md：「只有用户确认后才保存」和「不在范围内：跨对话的自动记忆」改为本计划的决定，注明 2026-11-02 改。
+- plans/archive/roadmap-tiers.md：「只有用户确认后才保存」和「不在范围内：跨对话的自动记忆」改为本计划的决定，注明 2026-11-02 改。
 
 ## 不在范围内
 

@@ -112,7 +112,7 @@ type Reply struct {
 	// as a proposal. Empty when it staged none.
 	Changes []Change `json:"changes"`
 	// Changes to the user's memories; Go checks and saves them without a
-	// confirmation (plans/memories.md).
+	// confirmation (plans/archive/memories.md).
 	MemoryChanges []MemoryChange `json:"memory_changes"`
 }
 

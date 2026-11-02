@@ -6,7 +6,7 @@ import { errorMessage } from '../lib/messages'
 import { MAX_MEMORIES, MAX_MEMORY_CHARS as MAX_CHARS, memoryErrorText } from '../lib/memories'
 import { t } from '../i18n'
 
-// The memories on the Profile page (plans/memories.md): what the meal
+// The memories on the Profile page (plans/archive/memories.md): what the meal
 // assistant keeps in mind. Pro users add and edit them; every user can see
 // and delete them, so a downgraded user can clear what was saved before.
 

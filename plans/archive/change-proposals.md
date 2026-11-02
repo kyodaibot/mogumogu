@@ -1,6 +1,6 @@
 # 变更提案：在对话中记录、修改、删除饮食记录
 
-> 状态：**已实现，待合并**（2026-10-31）。plans/roadmap-tiers.md 路线图第 3 步，**只对 Pro 开放**。
+> 状态：**已完成**（2026-10-31 实施，PR #9 合并到 master 后上线）。plans/archive/roadmap-tiers.md 路线图第 3 步，**只对 Pro 开放**。
 
 术语见 GLOSSARY.md（变更提案、饮食记录、账号等级）。
 

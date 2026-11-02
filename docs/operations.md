@@ -120,7 +120,7 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 
 ## 6. 云上部署（AWS）
 
-线上地址：https://mogumogu.teiyou416.ninja 。设计和取舍见 [plans/phase-5.md](../plans/phase-5.md)。
+线上地址：https://mogumogu.teiyou416.ninja 。设计和取舍见 [plans/archive/phase-5.md](../plans/archive/phase-5.md)。
 
 ### 6.1 组成
 
@@ -193,7 +193,8 @@ AWS_PROFILE=Teiyou make deploy TAG=<之前的提交号>
 ECR 只保留最近 10 个镜像，更早的版本需要先切换到那个提交，再执行 `make push`。
 
 **数据库只向前迁移。** 旧版本的 `migrate` 不认识比它新的迁移版本，会报错退出（golang-migrate 找不到当前版本的迁移文件）。这样部署会失败，而不会让旧代码去读写新的表结构。因此：
-- 回滚的目标版本不能早于最近一次迁移。目前线上是版本 6，阶段 5 及以后的提交都可以互相回滚。
+- 回滚的目标版本不能早于最近一次迁移：目标提交必须已经包含线上数据库的最新迁移（`backend/migrations/` 中编号最大的文件）。例如 000009（记忆）上线后，只能回滚到包含 000009 的提交。
+- 回滚没有在线上演练过（阶段 5 决定不做，见 plans/archive/phase-5.md 的完成报告）。
 - 新迁移应只做向后兼容的修改（例如只新增表和列）。需要撤销一次迁移时，写一个新的迁移，然后向前发布。
 - 数据本身出问题时，从 RDS 的自动备份恢复到某个时间点。恢复会生成一个新的实例，需要修改 Terraform 指向它，详见里程碑 4 的恢复演练。
 

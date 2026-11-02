@@ -2,10 +2,10 @@
 
 Query tools read data from Go's internal API (docs/adr/0001). Staging tools
 write nothing: they collect changes to meal records, which Go saves as a
-proposal and runs only when the user confirms (plans/change-proposals.md).
+proposal and runs only when the user confirms (plans/archive/change-proposals.md).
 Memory tools write nothing either: they collect changes to the user's
 memories, which Go saves with the reply, without a confirmation
-(plans/memories.md).
+(plans/archive/memories.md).
 """
 
 import datetime

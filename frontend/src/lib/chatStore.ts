@@ -1,4 +1,4 @@
-// The conversation kept in sessionStorage (plans/chat-session-storage.md), so
+// The conversation kept in sessionStorage (plans/archive/chat-session-storage.md), so
 // it survives a reload and leaving the calendar page, and ends with the tab.
 // The server still keeps no conversation; this copy only lives in the browser.
 
