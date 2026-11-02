@@ -139,6 +139,27 @@ describe('errors', () => {
     await expect(t.client.request('GET', '/api/auth/me')).rejects.toMatchObject({ status: 0, code: 'network_error' })
   })
 
+  it('gives up with "timeout" when the server does not answer in time', async () => {
+    vi.useFakeTimers()
+    try {
+      // A server that never answers; fetch rejects only when aborted.
+      const t = setup([
+        (init) => new Promise<Response>((_, reject) => {
+          init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }) as unknown as Response,
+      ])
+      t.cookies[CSRF_COOKIE] = 'tok'
+      const sent = t.client.request('POST', '/api/assistant/messages', {}, { timeoutMs: 45_000 })
+      const failed = expect(sent).rejects.toMatchObject({ status: 0, code: 'timeout' })
+      await vi.advanceTimersByTimeAsync(44_999)
+      expect(t.calls[0].init.signal!.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await failed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('returns undefined for 204', async () => {
     const t = setup([() => new Response(null, { status: 204 })])
     t.cookies[CSRF_COOKIE] = 'tok'

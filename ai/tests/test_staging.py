@@ -146,7 +146,7 @@ async def test_staging_without_permission_is_not_run():
 async def test_staging_next_to_submit_is_staged_before_submitting():
     outcome, model = await run([reply(tool_call("create_meal", **create()), done()), reply(done())])
 
-    assert outcome.steps == 2
+    assert outcome.counts.model_calls == 2
     assert len(outcome.changes) == 1
     results = [m.content for m in model.calls[1]["messages"] if isinstance(m, ToolMessage)]
     assert results[0].startswith("Staged") and results[1].startswith("Not submitted yet")

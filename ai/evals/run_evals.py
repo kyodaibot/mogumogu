@@ -340,6 +340,7 @@ CASES = [
 async def main() -> int:
     model = BedrockModel(os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID), os.environ.get("AWS_REGION", "ap-northeast-1"))
     failed = 0
+    forced = 0  # replies not submitted by the model on its own (finish is not "submitted")
     tokens = {False: [], True: []}  # without / with history: (input, output, cache read, cache write) per case
     # Names on the command line run only those cases.
     cases = [c for c in CASES if not sys.argv[1:] or c.name in sys.argv[1:]]
@@ -351,8 +352,10 @@ async def main() -> int:
         failed += problem is not None
         tokens[bool(case.req.history)].append(
             (outcome.input_tokens, outcome.output_tokens, outcome.cache_read_tokens, outcome.cache_write_tokens))
-        print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.steps} 步"
-              + ("（校验后重试）" if outcome.retried else "") + ", "
+        forced += outcome.finish not in (None, "submitted")
+        print(f"{'PASS' if problem is None else 'FAIL'}  {case.name}  {ms} ms, {outcome.counts.model_calls} 次调用"
+              + ("（校验后重试）" if outcome.retried else "")
+              + (f"（{outcome.finish}）" if outcome.finish not in (None, "submitted") else "") + ", "
               f"输入 {outcome.input_tokens} / 输出 {outcome.output_tokens} token"
               f"（缓存写入 {outcome.cache_write_tokens} / 命中 {outcome.cache_read_tokens}）"
               + (f"  ← {problem}" if problem else ""))
@@ -385,6 +388,7 @@ async def main() -> int:
         billed = total_in - read - write + 1.25 * write + 0.1 * read
         print(f"缓存命中率：{read / total_in:.0%}（命中 token ÷ 全部输入 token）；"
               f"输入计费量折合 {billed:,.0f} token，不缓存时 {total_in:,} token（{billed / total_in - 1:+.0%}）")
+    print(f"强制提交：{forced} 条")
     print(f"\n{len(cases) - failed}/{len(cases)} passed")
     return 1 if failed else 0
 

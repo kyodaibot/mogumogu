@@ -4,6 +4,8 @@ agent → route → tools → agent …
               → memorize → validate, or → agent
               → validate → END, or once → force_finish → validate
               → force_finish → validate
+
+How long each call may take is decided by TimeBudget (time_budget.py).
 """
 
 import asyncio
@@ -19,15 +21,19 @@ from pydantic import ValidationError
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
 from .schemas import ReplyRequest, SubmitReply
+from .time_budget import TimeBudget
 from .tools import (
     MEMORY_TOOLS, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY,
     DataSource, MemoryChanges, QueryBudget, Staging, run_query, tools_for,
 )
 
-# Query tools are allowed while fewer than this many model calls were made.
-MAX_AGENT_STEPS = 4
-# Only a safety net for counting bugs; the normal worst case is 11 node runs.
+# Tools are allowed while fewer than this many model calls were made. With the
+# forced submit and the validation retry, a message makes at most 6 calls.
+MAX_TOOL_MODEL_CALLS = 4
+# Only a fuse against counting bugs; the normal worst case is 11 node runs.
 RECURSION_LIMIT = 20
+
+_TIME_UP = "Time is up; this was not run. Call submit_reply with what you already have."
 
 _QUERY_NAMES = {t.name for t in QUERY_TOOLS}
 _STAGING_NAMES = {t.name for t in STAGING_TOOLS}
@@ -36,22 +42,38 @@ _MEMORY_NAMES = {t.name for t in MEMORY_TOOLS}
 
 class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
-    steps: int  # model calls so far
+    # The soft limit stopped a model call that could use tools.
+    out_of_time: bool
     retried: bool  # validate has sent a reply back once
+    # How the last submit_reply came about; see Outcome.finish.
+    finish: str | None
     result: SubmitReply | None
     error: str | None
 
 
 @dataclass
+class Counts:
+    model_calls: int = 0  # started, including timed-out ones
+    model_timeouts: int = 0
+    model_retries: int = 0  # after throttling or a dropped connection
+    go_timeouts: int = 0
+
+
+@dataclass
 class Outcome:
     result: SubmitReply | None
-    # None on success; "invalid_output" or "recursion_limit" otherwise.
+    # None on success; otherwise "invalid_output", "timeout", "disconnected"
+    # or "recursion_limit".
     error: str | None
-    steps: int
-    retried: bool
+    retried: bool = False
+    # "submitted" (the model's own submit_reply), "max_calls", "soft_deadline"
+    # or "no_tool_call" (forced), "deadline_invalid" (failed validation with
+    # no time to retry); None when no reply was written.
+    finish: str | None = None
+    counts: Counts = field(default_factory=Counts)
     # input_tokens counts every input token, cached ones included.
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int = 0
+    output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     # Changes staged for a proposal (tools.Staging); empty without any.
@@ -101,7 +123,7 @@ SYSTEM = SystemMessage([{"type": "text", "text": SYSTEM_PROMPT}, {"cachePoint": 
 
 
 def build_graph(
-    model: ChatModel, source: DataSource, allergens: list[str],
+    model: ChatModel, source: DataSource, allergens: list[str], time: TimeBudget, counts: Counts,
     staging: Staging | None = None, memories: MemoryChanges | None = None,
 ):
     """staging is None when Go does not allow proposals, memories when it
@@ -112,16 +134,37 @@ def build_graph(
     # What memorize answered each memory call; validate repeats it.
     memory_answers: dict[str, str] = {}
 
-    async def call_model(messages, force_tool=None) -> AIMessage:
-        return await model.ainvoke([SYSTEM, *messages], tools_offered, force_tool)
+    async def call_model(messages, kind: str, force_tool=None) -> AIMessage | None:
+        """None when the call was not started or timed out."""
+        timeout = time.timeout_for(kind)
+        if timeout is None:
+            return None
+
+        def may_retry() -> bool:
+            if time.timeout_for(kind) is None:
+                return False
+            counts.model_retries += 1
+            return True
+
+        counts.model_calls += 1
+        try:
+            async with asyncio.timeout(timeout):
+                return await model.ainvoke([SYSTEM, *messages], tools_offered, force_tool, may_retry)
+        except TimeoutError:
+            counts.model_timeouts += 1
+            return None
 
     async def agent(state: State):
-        resp = await call_model(state["messages"])
-        return {"messages": [resp], "steps": state["steps"] + 1}
+        resp = await call_model(state["messages"], "model")
+        if resp is None:
+            return {"out_of_time": True}
+        return {"messages": [resp]}
 
     def route(state: State) -> str:
+        if state["out_of_time"]:
+            return "force_finish"
         names = {call["name"] for call in state["messages"][-1].tool_calls}
-        can_run = state["steps"] < MAX_AGENT_STEPS
+        can_run = counts.model_calls < MAX_TOOL_MODEL_CALLS
         # Memories saved next to submit_reply need no second model call when
         # they all pass: the reply already says what it saves.
         others = names - {SUBMIT_REPLY.name}
@@ -138,14 +181,23 @@ def build_graph(
             return "tools"
         return "force_finish"
 
+    async def query(call: dict) -> str:
+        timeout = time.timeout_for("go")
+        if timeout is None:
+            return _TIME_UP
+        try:
+            async with asyncio.timeout(timeout):
+                return await run_query(source, call["name"], call["args"], budget, seen_meals)
+        except TimeoutError:
+            counts.go_timeouts += 1
+            return "This query timed out. Answer without it, and do not query it again."
+
+    seen_meals = staging.seen_meals if staging else None
+
     async def tools(state: State):
         calls = state["messages"][-1].tool_calls
-        seen = staging.seen_meals if staging else None
         queries = [c for c in calls if c["name"] in _QUERY_NAMES]
-        answers = dict(zip(
-            (c["id"] for c in queries),
-            await asyncio.gather(*(run_query(source, c["name"], c["args"], budget, seen) for c in queries)),
-        ))
+        answers = dict(zip((c["id"] for c in queries), await asyncio.gather(*(query(c) for c in queries))))
         # After the queries, which may show the ids of the records to change.
         for c in calls:
             if c["name"] in _STAGING_NAMES:
@@ -165,7 +217,7 @@ def build_graph(
             if c["name"] in _MEMORY_NAMES:
                 memory_answers[c["id"]], passed = memories.stage(c["name"], c["args"])
                 ok = ok and passed
-        if ok or state["steps"] >= MAX_AGENT_STEPS:
+        if ok or counts.model_calls >= MAX_TOOL_MODEL_CALLS:
             return {}
         not_yet = "Not submitted yet: read these results, then call submit_reply again."
         return {"messages": [
@@ -176,6 +228,16 @@ def build_graph(
         return "validate" if isinstance(state["messages"][-1], AIMessage) else "agent"
 
     async def force_finish(state: State):
+        # The validation retry keeps how the reply came about; otherwise this
+        # is why the model must submit now.
+        if state["retried"]:
+            finish = state["finish"]
+        elif state["out_of_time"]:
+            finish = "soft_deadline"
+        elif counts.model_calls >= MAX_TOOL_MODEL_CALLS:
+            finish = "max_calls"
+        else:
+            finish = "no_tool_call"
         new: list[AnyMessage] = []
         last = state["messages"][-1]
         # Coming straight from agent: its queries (if any) are not run.
@@ -183,17 +245,24 @@ def build_graph(
             new = _answer_pending(
                 last, "No more tool calls; these were not run. Call submit_reply with what you already have."
             )
-        resp = await call_model([*state["messages"], *new], force_tool=SUBMIT_REPLY.name)
-        return {"messages": [*new, resp], "steps": state["steps"] + 1}
+        resp = await call_model([*state["messages"], *new], "final", force_tool=SUBMIT_REPLY.name)
+        if resp is None:
+            if state["retried"]:
+                return {"error": "invalid_output", "finish": "deadline_invalid"}
+            return {"error": "timeout", "finish": finish}
+        return {"messages": [*new, resp], "finish": finish}
 
     def validate(state: State):
+        finish = state["finish"] or "submitted"
         last = state["messages"][-1]
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
         checked = check_reply(submit["args"], allergens) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
-            return {"result": checked.rounded()}
+            return {"result": checked.rounded(), "finish": finish}
         if state["retried"]:
-            return {"error": "invalid_output"}
+            return {"error": "invalid_output", "finish": finish}
+        if time.timeout_for("final") is None:
+            return {"error": "invalid_output", "finish": "deadline_invalid"}
         feedback = f"The reply failed validation: {checked}. Fix it and call submit_reply again."
         if submit:
             # Queries sent alongside submit_reply are ignored, not run.
@@ -203,7 +272,10 @@ def build_graph(
             ]
         else:
             msgs = _answer_pending(last, feedback)
-        return {"messages": msgs, "retried": True}
+        return {"messages": msgs, "retried": True, "finish": finish}
+
+    def after_force_finish(state: State) -> str:
+        return END if state["error"] is not None else "validate"
 
     def after_validate(state: State) -> str:
         done = state["result"] is not None or state["error"] is not None
@@ -219,36 +291,45 @@ def build_graph(
     g.add_conditional_edges("agent", route, ["tools", "memorize", "validate", "force_finish"])
     g.add_edge("tools", "agent")
     g.add_conditional_edges("memorize", after_memorize, ["validate", "agent"])
-    g.add_edge("force_finish", "validate")
+    g.add_conditional_edges("force_finish", after_force_finish, ["validate", END])
     g.add_conditional_edges("validate", after_validate, [END, "force_finish"])
     return g.compile()
 
 
-async def run_agent(model: ChatModel, source: DataSource, req: ReplyRequest) -> Outcome:
+async def run_agent(
+    model: ChatModel, source: DataSource, req: ReplyRequest, time: TimeBudget | None = None
+) -> Outcome:
     """Answers one message. Model and data-source errors propagate to the caller."""
+    time = time or TimeBudget()
+    counts = Counts()
     profile = req.context.profile
     allergens = (profile.allergens or []) if profile else []
     staging = Staging((m.id for m in req.context.meals), allergens) if req.context.allow_proposal else None
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
-    graph = build_graph(model, source, allergens, staging, memories)
+    graph = build_graph(model, source, allergens, time, counts, staging, memories)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
-        "steps": 0,
+        "out_of_time": False,
         "retried": False,
+        "finish": None,
         "result": None,
         "error": None,
     }
     try:
         final = await graph.ainvoke(init, {"recursion_limit": RECURSION_LIMIT})
     except GraphRecursionError:
-        return Outcome(None, "recursion_limit", -1, False, 0, 0)
+        return Outcome(None, "recursion_limit", counts=counts)
 
+    error, finish = final["error"], final["finish"]
+    if final["result"] is None and time.stopped:
+        error, finish = "disconnected", None
     usage = [m.usage_metadata for m in final["messages"] if isinstance(m, AIMessage) and m.usage_metadata]
     return Outcome(
         result=final["result"],
-        error=final["error"],
-        steps=final["steps"],
+        error=error,
         retried=final["retried"],
+        finish=finish,
+        counts=counts,
         input_tokens=sum(u["input_tokens"] for u in usage),
         output_tokens=sum(u["output_tokens"] for u in usage),
         cache_read_tokens=sum(u.get("input_token_details", {}).get("cache_read", 0) for u in usage),
