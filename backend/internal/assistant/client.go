@@ -54,6 +54,10 @@ type Request struct {
 	History []Turn `json:"history"`
 	// Token lets the agent's query tools read this user's data (auth.AgentTokens).
 	Token string `json:"token"`
+	// Who asked, only for the AI service's traces (plans/langfuse.md); not
+	// part of the context the model sees.
+	UserID int64  `json:"user_id"`
+	Tier   string `json:"tier"`
 }
 
 // Turn is one answered message of the conversation history

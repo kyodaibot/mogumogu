@@ -36,6 +36,8 @@ DB_PASSWORD=$(param db_password)
 JWT_SECRET=$(param jwt_secret)
 CSRF_SECRET=$(param csrf_secret)
 TAVILY_API_KEY=$(param tavily_api_key)
+LANGFUSE_PUBLIC_KEY=$(param langfuse_public_key)
+LANGFUSE_SECRET_KEY=$(param langfuse_secret_key)
 ENV
 mv .env.new .env
 

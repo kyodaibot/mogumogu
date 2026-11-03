@@ -86,6 +86,13 @@ services:
       # no card. Only the model's query is sent.
       SEARCH_PROVIDER: tavily
       TAVILY_API_KEY: ${TAVILY_API_KEY}
+      # Traces with full content to Langfuse's Japan region, kept 30 days
+      # (plans/langfuse.md, docs/adr/0002).
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_BASE_URL: https://jp.cloud.langfuse.com
+      LANGFUSE_TRACING_ENVIRONMENT: prod
+      LANGFUSE_RELEASE: ${TAG}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
       interval: 10s

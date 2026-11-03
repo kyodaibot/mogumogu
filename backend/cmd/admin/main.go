@@ -1,7 +1,7 @@
 // Command admin changes what only an administrator may change. It talks to
 // the database directly and is not reachable over HTTP (plans/archive/account-tiers.md).
 //
-//	go run ./cmd/admin users                          list users and their tiers
+//	go run ./cmd/admin users                          list users (with their IDs) and their tiers
 //	go run ./cmd/admin tier <username> <normal|pro>   change a user's tier
 //
 // Database settings come from the same DB_* environment variables as the server.
@@ -81,9 +81,9 @@ func listUsers(ctx context.Context, st *store.Store, out io.Writer) error {
 		return err
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "USERNAME\tTIER\tCREATED")
+	fmt.Fprintln(w, "ID\tUSERNAME\tTIER\tCREATED")
 	for _, u := range users {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", u.Username, u.Tier, tz.FormatInstant(u.CreatedAt))
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", u.ID, u.Username, u.Tier, tz.FormatInstant(u.CreatedAt))
 	}
 	return w.Flush()
 }

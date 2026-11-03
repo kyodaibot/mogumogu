@@ -329,6 +329,8 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 		Message: message,
 		History: history,
 		Token:   a.agentTokens.Issue(userID),
+		UserID:  userID,
+		Tier:    string(user.Tier),
 		Context: assistant.Context{
 			TargetDate: target.String(),
 			Now:        tz.FormatInstant(now),

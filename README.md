@@ -121,6 +121,8 @@ The first time the pre-commit gitleaks hook runs, it builds gitleaks with your l
 
 5. Web search for Pro users is off unless `.env` sets `SEARCH_PROVIDER`: `tavily` makes real searches with your own free-plan `TAVILY_API_KEY` (each search uses one credit), and `fake` returns fixed results without going online. See docs/operations.md 6.12.
 
+6. Traces of the AI service go to Langfuse only when `.env` sets `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (your own project in the Japan region, `LANGFUSE_BASE_URL=https://jp.cloud.langfuse.com`). They hold full message content. `make ai-eval` then also records each case with a pass/fail score. See docs/operations.md 6.13.
+
 ## Running locally
 
 ### With make (recommended)
