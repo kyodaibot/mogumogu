@@ -1,51 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ApiError, api, type Proposal } from '../api'
+import type { Proposal } from '../api'
 import { formatDayTitle, formatTime, type Ymd } from '../lib/date'
-import { errorMessage } from '../lib/messages'
 import { fieldChanges, resultText, subjectOf, type ProposalState } from '../lib/proposals'
 import { t } from '../i18n'
 
 // The card of a change proposal (plans/archive/change-proposals.md): every change the
 // assistant staged, each with a checkbox. Nothing is saved until the user
 // runs it; afterwards each change shows its result and the card is locked.
+// The state belongs to the conversation (lib/conversation), which the
+// events below change.
 const props = defineProps<{ proposal: Proposal; state: ProposalState; today: Ymd }>()
-// Some records changed; the calendar reloads.
-const emit = defineEmits<{ executed: [] }>()
+const emit = defineEmits<{ toggle: [index: number, checked: boolean]; run: [] }>()
 
 const p = computed(() => t.value.assistant.proposal)
 const locked = computed(() => !!props.state.results || props.state.closed)
 const canRun = computed(() => !locked.value && !props.state.running && props.state.checked.some(Boolean))
-
-// Errors no retry can fix.
-const FINAL = ['proposal_executed', 'proposal_expired', 'pro_required', 'not_found']
-
-async function run() {
-  const s = props.state
-  s.running = true
-  s.error = undefined
-  try {
-    s.results = await api.executeProposal(
-      props.proposal.id,
-      s.checked.flatMap((checked, i) => (checked ? [i] : [])),
-    )
-    emit('executed')
-  } catch (err) {
-    s.error = failureText(err)
-    s.closed = err instanceof ApiError && FINAL.includes(err.code)
-  } finally {
-    s.running = false
-  }
-}
-
-function failureText(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.code === 'proposal_executed') return p.value.executed
-    if (err.code === 'proposal_expired') return p.value.expired
-    if (err.code === 'pro_required') return p.value.proRequired
-  }
-  return errorMessage(err)
-}
 
 const MARKS = { done: '✓', failed: '✗', skipped: '–' } as const
 </script>
@@ -62,7 +32,12 @@ const MARKS = { done: '✓', failed: '✗', skipped: '–' } as const
         :class="[c.op, state.results?.[i]?.status ?? (state.checked[i] ? '' : 'unchecked')]"
       >
         <label>
-          <input v-model="state.checked[i]" type="checkbox" :disabled="locked || state.running" />
+          <input
+            type="checkbox"
+            :checked="state.checked[i]"
+            :disabled="locked || state.running"
+            @change="emit('toggle', i, ($event.target as HTMLInputElement).checked)"
+          />
           <span class="op">{{ p.ops[c.op] }}</span>
           <span class="when">{{ formatDayTitle(subjectOf(c).date) }} {{ t.meals[subjectOf(c).meal_type] }}</span>
         </label>
@@ -86,7 +61,7 @@ const MARKS = { done: '✓', failed: '✗', skipped: '–' } as const
     <p v-if="state.error" class="error" role="alert">{{ state.error }}</p>
     <div v-if="!locked" class="actions">
       <small>{{ p.expires(formatTime(proposal.expires_at, today)) }}</small>
-      <button type="button" class="primary" :disabled="!canRun" @click="run">
+      <button type="button" class="primary" :disabled="!canRun" @click="emit('run')">
         {{ state.running ? p.running : p.run }}
       </button>
     </div>
