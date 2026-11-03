@@ -17,7 +17,7 @@ const use = () => store
 
 const turn = (id: number, over: Partial<ChatTurn> = {}): ChatTurn => ({
   id, date: '2026-11-02', text: `質問${id}`, status: 'done', undone: [],
-  reply: { reply: '回答', recommendations: [], ask_meal_type: false, meal_type: null, proposal: null, memory_updates: [] },
+  reply: { reply: '回答', recommendations: [], ask_meal_type: false, meal_type: null, proposal: null, memory_updates: [], sources: [] },
   ...over,
 })
 
@@ -60,6 +60,13 @@ describe('chatStore', () => {
     saveChat(7, { turns: [turn(1, { proposal })], nextId: 2 }, use)
 
     expect(loadChat(7, use).turns[0].proposal).toEqual({ ...proposal, running: false })
+  })
+
+  it('gives a reply saved before sources existed an empty list', () => {
+    const { sources: _, ...old } = turn(1).reply!
+    store.setItem('mogumogu.chat', JSON.stringify({ version: 1, userId: 7, turns: [{ ...turn(1), reply: old }], nextId: 2 }))
+
+    expect(loadChat(7, use).turns[0].reply!.sources).toEqual([])
   })
 
   it('clears the saved chat', () => {

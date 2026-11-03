@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, ApiError, type Memory } from '../api'
+import { api, type Memory } from '../api'
 import { session } from '../session'
 import { errorMessage } from '../lib/messages'
-import { MAX_MEMORIES, MAX_MEMORY_CHARS as MAX_CHARS, memoryErrorText } from '../lib/memories'
+import { MAX_MEMORIES, MAX_MEMORY_CHARS as MAX_CHARS, deleteMemoryIdempotent, memoryErrorText } from '../lib/memories'
 import { t } from '../i18n'
 
 // The memories on the Profile page (plans/archive/memories.md): what the meal
@@ -69,12 +69,8 @@ async function saveEdit() {
 async function remove(item: Memory) {
   if (!window.confirm(t.value.common.confirmDelete(item.content))) return
   await change(async () => {
-    try {
-      await api.deleteMemory(item.id)
-    } catch (err) {
-      // Already gone, e.g. undone in the chat.
-      if (!(err instanceof ApiError && err.code === 'not_found')) throw err
-    }
+    // Already gone (undone in the chat, for example) counts as deleted.
+    await deleteMemoryIdempotent(item.id)
     items.value = items.value.filter((x) => x.id !== item.id)
   })
 }

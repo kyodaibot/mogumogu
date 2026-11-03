@@ -1,6 +1,6 @@
 // Memories (GLOSSARY: 记忆) on the Profile page and under replies.
 
-import { ApiError } from '../api'
+import { ApiError, api } from '../api'
 import { t } from '../i18n'
 import { errorMessage } from './messages'
 
@@ -24,4 +24,13 @@ export function memoryErrorText(err: unknown): string {
     }
   }
   return errorMessage(err)
+}
+
+/** Deletes a memory; one already gone (deleted elsewhere) counts as deleted. */
+export async function deleteMemoryIdempotent(id: number, del: (id: number) => Promise<void> = api.deleteMemory) {
+  try {
+    await del(id)
+  } catch (err) {
+    if (!(err instanceof ApiError && err.code === 'not_found')) throw err
+  }
 }

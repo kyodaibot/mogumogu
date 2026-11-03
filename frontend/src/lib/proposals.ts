@@ -1,10 +1,11 @@
 // Change proposals in the chat (plans/archive/change-proposals.md): what the card
 // shows for each change, and what the history keeps of them.
 
-import type { ChangeResult, HistoryChange, MealRecordInput, Proposal, ProposedChange, ProposedMeal } from '../api'
+import { ApiError, type ChangeResult, type HistoryChange, type MealRecordInput, type Proposal, type ProposedChange, type ProposedMeal } from '../api'
 import { t } from '../i18n'
 import { formatShortDate } from './date'
 import { NUTRIENTS, formatNutrient } from './meals'
+import { errorMessage } from './messages'
 
 /** The record a change is about: the new one, or the one deleted. */
 export function subjectOf(c: ProposedChange): ProposedMeal {
@@ -51,7 +52,7 @@ export function resultText(r: ChangeResult): string {
 
 /**
  * A proposal card's state. It lives on the chat turn, so it survives closing
- * the panel; the card changes it in place.
+ * the panel and a reload; only the conversation (lib/conversation) changes it.
  */
 export interface ProposalState {
   /** One per change; all checked at first. */
@@ -66,4 +67,19 @@ export interface ProposalState {
 
 export function newProposalState(p: Proposal): ProposalState {
   return { checked: p.changes.map(() => true), running: false, closed: false }
+}
+
+// Errors no retry can fix: the card closes.
+const FINAL = ['proposal_executed', 'proposal_expired', 'pro_required', 'not_found']
+
+/** What the card says when running the proposal failed, and whether it closes. */
+export function proposalFailure(err: unknown): { error: string; closed: boolean } {
+  const p = t.value.assistant.proposal
+  const closed = err instanceof ApiError && FINAL.includes(err.code)
+  if (err instanceof ApiError) {
+    if (err.code === 'proposal_executed') return { error: p.executed, closed }
+    if (err.code === 'proposal_expired') return { error: p.expired, closed }
+    if (err.code === 'pro_required') return { error: p.proRequired, closed }
+  }
+  return { error: errorMessage(err), closed }
 }

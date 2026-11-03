@@ -24,8 +24,4 @@ describe('sourceLinks', () => {
     ])
     expect(links.map((l) => l.label)).toEqual(['e'])
   })
-
-  it('accepts a reply saved before sources existed', () => {
-    expect(sourceLinks(undefined)).toEqual([])
-  })
 })

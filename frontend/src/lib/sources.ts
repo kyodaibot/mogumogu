@@ -12,9 +12,9 @@ export interface SourceLink {
  * reaching the page must never be javascript: or the like), labelled with the
  * page title, or its domain when the title is empty.
  */
-export function sourceLinks(sources: Source[] | undefined): SourceLink[] {
+export function sourceLinks(sources: Source[]): SourceLink[] {
   const links: SourceLink[] = []
-  for (const s of sources ?? []) {
+  for (const s of sources) {
     let url: URL
     try {
       url = new URL(s.url)

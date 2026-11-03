@@ -11,6 +11,8 @@ export interface ChatTurn extends SentTurn {
   id: number
   error?: string
   retryable?: boolean
+  /** The failure cannot be fixed in this conversation; offer a new one. */
+  restart?: boolean
   /** Indexes of recommendations already added to the meal log. */
   added?: number[]
   /** The state of the reply's change proposal card, if it has one. */
@@ -65,8 +67,10 @@ export function clearChat(store: () => Store = browserStore) {
   }
 }
 
-/** A turn after a reload: what was still in flight did not finish here. */
+/** A turn after a reload: what was still in flight did not finish here, and
+ *  a reply saved before a field existed gets its empty value. */
 function resume(turn: ChatTurn): ChatTurn {
+  if (turn.reply && !turn.reply.sources) turn = { ...turn, reply: { ...turn.reply, sources: [] } }
   if (turn.status === 'pending') {
     return { ...turn, status: 'failed', error: t.value.assistant.interrupted, retryable: true }
   }

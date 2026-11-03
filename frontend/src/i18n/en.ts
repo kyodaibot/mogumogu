@@ -158,6 +158,7 @@ export const en = {
     interrupted: 'You left the page before the answer came. Please send it again.',
     unavailable: 'The meal assistant could not answer this time. Please retry.',
     tooLong: (max: number) => `Messages can be up to ${max} characters.`,
+    historyBroken: 'This chat can no longer continue. Start a new chat to keep going.',
     /** How a target date reads inside a question. */
     today: 'today',
     tomorrow: 'tomorrow',
@@ -218,6 +219,12 @@ export const en = {
       network_error: 'Cannot reach the server. Check your connection or try again later.',
       server_unavailable: 'The server is temporarily unavailable. Please try again later.',
       internal_error: 'Something went wrong on the server. Please try again later.',
+      invalid_request: 'The request could not be read. Reload the page and try again.',
+      pro_required: 'This needs a Pro account.',
+      proposal_executed: 'These changes have already been run.',
+      proposal_expired: 'These changes have expired.',
+      ai_unavailable: 'The meal assistant could not answer this time. Please try again.',
+      timeout: 'No answer came in time. Please try again.',
     } as Record<string, string>,
     reasons: {
       required: 'Required',
