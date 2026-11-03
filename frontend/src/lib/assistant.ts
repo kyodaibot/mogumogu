@@ -9,6 +9,8 @@ import { summaryOf } from './proposals'
 
 /** A conversation has at most this many answered messages (project-review 3.6). */
 export const MAX_TURNS = 10
+/** Characters in one message; Go and the AI service have the same (contract/limits.json). */
+export const MAX_LENGTH = 500
 
 /** "today", "tomorrow" or "on Oct 29": how a target date reads inside a question. */
 export function dateWords(date: Ymd, today: Ymd): string {

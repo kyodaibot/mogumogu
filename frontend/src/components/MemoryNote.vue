@@ -1,34 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { api, ApiError, type MemoryUpdate } from '../api'
-import { errorMessage } from '../lib/messages'
+import type { MemoryUpdate } from '../api'
 import { t } from '../i18n'
 
 // The line under a reply that saved or forgot memories (plans/archive/memories.md).
-// They are already saved; a new one can be undone here with ✕.
+// They are already saved; a new one can be undone here with ✕. The undo is
+// the conversation's (lib/conversation), which keeps what was undone.
 const props = defineProps<{
   updates: MemoryUpdate[]
   /** Ids of new memories already undone; kept on the turn. */
   undone: number[]
+  /** Undoes one; gives the error text, or null when it is undone. */
+  undo: (id: number) => Promise<string | null>
 }>()
 
 const n = computed(() => t.value.assistant.memoryNote)
 const busy = ref<number | null>(null)
 const error = ref('')
 
-async function undo(u: MemoryUpdate) {
+async function undoOne(u: MemoryUpdate) {
   busy.value = u.id
-  error.value = ''
-  try {
-    await api.deleteMemory(u.id)
-    props.undone.push(u.id)
-  } catch (err) {
-    // Already deleted, e.g. on the Profile page.
-    if (err instanceof ApiError && err.code === 'not_found') props.undone.push(u.id)
-    else error.value = errorMessage(err)
-  } finally {
-    busy.value = null
-  }
+  error.value = (await props.undo(u.id)) ?? ''
+  busy.value = null
 }
 </script>
 
@@ -52,7 +45,7 @@ async function undo(u: MemoryUpdate) {
             :title="n.undo"
             :aria-label="`${n.undo}: ${u.content}`"
             :disabled="busy !== null"
-            @click="undo(u)"
+            @click="undoOne(u)"
           >
             ✕
           </button>

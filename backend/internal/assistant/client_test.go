@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mogumogu/backend/internal/contracttest"
 )
 
 func TestReply(t *testing.T) {
@@ -82,10 +84,10 @@ func TestReplyPassesEstimatesOn(t *testing.T) {
 	}
 }
 
-// The AI service gives up after 30 s; Go must wait longer, or it cuts off
-// the service's own answer (a timeout error included).
+// Go must wait longer than the AI service's own hard limit, or it cuts off
+// the service's answer (a timeout error included).
 func TestTimeoutIsLongerThanTheServices(t *testing.T) {
-	const serviceHardLimit = 30 * time.Second
+	serviceHardLimit := time.Duration(contracttest.ReadLimits(t).AIHardLimitSeconds) * time.Second
 	if Timeout <= serviceHardLimit {
 		t.Fatalf("Timeout = %v, want more than the AI service's %v", Timeout, serviceHardLimit)
 	}
