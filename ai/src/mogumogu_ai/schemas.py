@@ -125,6 +125,9 @@ class ReplyRequest(BaseModel):
     history: list[Turn] = Field(default_factory=list, max_length=9)
     # Short-lived token Go issued for this request; sent back on tool calls.
     token: str = Field(min_length=1)
+    # Who asked: only for the trace (tracing.py), never shown to the model.
+    user_id: int | None = None
+    tier: Literal["normal", "pro"] | None = None
 
 
 # Atwater factors: kcal per gram of protein, carbs and fat.

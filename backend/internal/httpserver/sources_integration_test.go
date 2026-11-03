@@ -28,8 +28,8 @@ func TestIntegrationAssistantSources(t *testing.T) {
 
 	var got struct{ Sources []sourceJSON }
 	b.expect(200, "POST", "/api/assistant/messages", message("2026-10-31", "北部食堂のメニュー")).json(t, &got)
-	if !env.ai.last().Context.AllowSearch {
-		t.Fatal("pro context: allow_search is false")
+	if !env.ai.last().Context.AllowSearch || env.ai.last().Tier != "pro" {
+		t.Fatal("pro context: allow_search is false or tier is not pro")
 	}
 	urls := []string{}
 	for _, s := range got.Sources {
