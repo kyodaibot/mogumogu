@@ -14,7 +14,15 @@ import (
 const (
 	maxRangeDays     = 62
 	maxEventDuration = 24 * time.Hour
+
+	// A meal record's limits. The assistant stages records with the same
+	// (contract/limits.json).
+	maxMealContentChars = 200
+	maxCalories         = 10000
+	maxNutrientG        = 1000
 )
+
+var mealTypes = []string{"breakfast", "lunch", "dinner", "snack"}
 
 // dateRange parses the inclusive from/to query parameters (docs/api.md 6.2),
 // which may cover at most maxDays days.
@@ -273,12 +281,12 @@ func checkMeal(v *validator, prefix string, in mealInput) store.MealRecord {
 	} else {
 		m.Date = d.Time()
 	}
-	m.MealType = v.oneOf(prefix+"meal_type", in.MealType, "breakfast", "lunch", "dinner", "snack")
-	m.Content = v.text(prefix+"content", in.Content, 1, 200)
-	m.Calories = v.decimal(prefix+"calories", in.Calories, 0, 10000, false)
-	m.ProteinG = v.decimal(prefix+"protein_g", in.ProteinG, 0, 1000, false)
-	m.FatG = v.decimal(prefix+"fat_g", in.FatG, 0, 1000, false)
-	m.CarbsG = v.decimal(prefix+"carbs_g", in.CarbsG, 0, 1000, false)
+	m.MealType = v.oneOf(prefix+"meal_type", in.MealType, mealTypes...)
+	m.Content = v.text(prefix+"content", in.Content, 1, maxMealContentChars)
+	m.Calories = v.decimal(prefix+"calories", in.Calories, 0, maxCalories, false)
+	m.ProteinG = v.decimal(prefix+"protein_g", in.ProteinG, 0, maxNutrientG, false)
+	m.FatG = v.decimal(prefix+"fat_g", in.FatG, 0, maxNutrientG, false)
+	m.CarbsG = v.decimal(prefix+"carbs_g", in.CarbsG, 0, maxNutrientG, false)
 	return m
 }
 

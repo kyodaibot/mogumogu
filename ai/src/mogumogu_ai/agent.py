@@ -350,7 +350,7 @@ async def run_agent(
     counts = Counts()
     profile = req.context.profile
     allergens = (profile.allergens or []) if profile else []
-    staging = Staging((m.id for m in req.context.meals), allergens) if req.context.allow_proposal else None
+    staging = Staging(req.context.meals, allergens) if req.context.allow_proposal else None
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
     searches = SearchBudget()
     search = search if req.context.allow_search else None

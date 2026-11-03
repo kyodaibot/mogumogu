@@ -1,0 +1,19 @@
+{
+  "message_chars": 500,
+  "reply_chars": 1000,
+  "dish_name_chars": 80,
+  "dish_description_chars": 200,
+  "meal_content_chars": 200,
+  "recommendation_counts": [0, 3],
+  "history_turns": 9,
+  "changes_per_reply": 10,
+  "memories": 30,
+  "memory_chars": 100,
+  "query_span_days": 31,
+  "sources": 5,
+  "searches": 4,
+  "search_rounds": 2,
+  "meal_types": ["breakfast", "lunch", "dinner", "snack"],
+  "serving_nutrition_max": {"calories": 10000, "protein_g": 1000, "fat_g": 1000, "carbs_g": 1000},
+  "ai_hard_limit_s": 30
+}

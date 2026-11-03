@@ -27,6 +27,12 @@ const (
 
 	// A conversation has at most 10 turns: 9 in the history plus this one.
 	maxHistoryTurns = 9
+	// Lengths in characters of a message, a reply and a recommended dish;
+	// the AI service and the browser have the same (contract/limits.json).
+	maxMessageChars         = 500
+	maxReplyChars           = 1000
+	maxDishNameChars        = 80
+	maxDishDescriptionChars = 200
 	// Nine turns of Japanese at their length limits come to about 60 KB.
 	assistantMaxBodyBytes = 128 << 10
 )
@@ -86,8 +92,8 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 		} else {
 			turn.Date = d.String()
 		}
-		turn.Message = v.text(field("message"), t.Message, 1, 500)
-		turn.Reply = v.text(field("reply"), t.Reply, 1, 1000)
+		turn.Message = v.text(field("message"), t.Message, 1, maxMessageChars)
+		turn.Reply = v.text(field("reply"), t.Reply, 1, maxReplyChars)
 		// A reply has no recommendations or exactly three.
 		if n := len(t.Recommendations); n != 0 && n != 3 {
 			v.add(field("recommendations"), "invalid_value")
@@ -95,8 +101,8 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 		for j, r := range t.Recommendations {
 			prefix := fmt.Sprintf("%s[%d].", field("recommendations"), j)
 			turn.Recommendations = append(turn.Recommendations, assistant.TurnDish{
-				Name:        v.text(prefix+"name", r.Name, 1, 80),
-				Description: v.text(prefix+"description", r.Description, 1, 200),
+				Name:        v.text(prefix+"name", r.Name, 1, maxDishNameChars),
+				Description: v.text(prefix+"description", r.Description, 1, maxDishDescriptionChars),
 			})
 		}
 		if len(t.Changes) > maxProposalChanges {
@@ -107,8 +113,8 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 			prefix := fmt.Sprintf("%s[%d].", field("changes"), j)
 			tc := assistant.TurnChange{
 				Op:       v.oneOf(prefix+"op", ch.Op, store.OpCreate, store.OpUpdate, store.OpDelete),
-				MealType: v.oneOf(prefix+"meal_type", ch.MealType, "breakfast", "lunch", "dinner", "snack"),
-				Content:  v.text(prefix+"content", ch.Content, 1, 200),
+				MealType: v.oneOf(prefix+"meal_type", ch.MealType, mealTypes...),
+				Content:  v.text(prefix+"content", ch.Content, 1, maxMealContentChars),
 			}
 			if ch.Date == nil {
 				v.add(prefix+"date", "required")
@@ -198,7 +204,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 	} else {
 		target = d
 	}
-	message := v.text("message", in.Message, 1, 500)
+	message := v.text("message", in.Message, 1, maxMessageChars)
 	locale := "en"
 	if in.Locale != nil {
 		switch *in.Locale {
@@ -277,52 +283,36 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 // memory changes in the reply are checked against.
 func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, []store.Memory, error) {
 	userID := user.ID
-	var profile any
+	d := contextData{Target: target, Now: now, Locale: locale, Pro: user.Tier == store.TierPro}
 	p, err := a.store.GetProfile(ctx, userID)
 	switch {
 	case err == nil:
-		profile = toProfileJSON(p)
+		d.Profile = &p
 	case !errors.Is(err, store.ErrNotFound):
 		return assistant.Reply{}, nil, err
 	}
 
 	// A downgraded user keeps their memories, but they are not used.
-	pro := user.Tier == store.TierPro
-	var memories []store.Memory
-	if pro {
-		if memories, err = a.store.ListMemories(ctx, userID); err != nil {
+	if d.Pro {
+		if d.Memories, err = a.store.ListMemories(ctx, userID); err != nil {
 			return assistant.Reply{}, nil, err
 		}
 	}
-	memoryItems := make([]contextMemory, 0, len(memories))
-	for _, m := range memories {
-		memoryItems = append(memoryItems, contextMemory{ID: m.ID, Content: m.Content})
-	}
 
-	evFrom, evTo := target.AddDays(-1), target.AddDays(1)
-	start, end := tz.RangeBounds(evFrom, evTo)
-	events, err := a.store.ListEvents(ctx, userID, start, end)
-	if err != nil {
+	d.EventsFrom, d.EventsTo = target.AddDays(-1), target.AddDays(1)
+	start, end := tz.RangeBounds(d.EventsFrom, d.EventsTo)
+	if d.Events, err = a.store.ListEvents(ctx, userID, start, end); err != nil {
 		return assistant.Reply{}, nil, err
-	}
-	eventItems := make([]eventJSON, 0, len(events))
-	for _, e := range events {
-		eventItems = append(eventItems, toEventJSON(e))
 	}
 
 	// Future records are plans, not meals eaten: the window ends today at the latest.
-	mealTo := target
+	d.MealsTo = target
 	if today := tz.Today(now); today.Before(target) {
-		mealTo = today
+		d.MealsTo = today
 	}
-	mealFrom := mealTo.AddDays(-(mealWindowDays - 1))
-	meals, err := a.store.ListMeals(ctx, userID, mealFrom.Time(), mealTo.Time())
-	if err != nil {
+	d.MealsFrom = d.MealsTo.AddDays(-(mealWindowDays - 1))
+	if d.Meals, err = a.store.ListMeals(ctx, userID, d.MealsFrom.Time(), d.MealsTo.Time()); err != nil {
 		return assistant.Reply{}, nil, err
-	}
-	mealItems := make([]mealJSON, 0, len(meals))
-	for _, m := range meals {
-		mealItems = append(mealItems, toMealJSON(m))
 	}
 
 	reply, err := a.assistant.Reply(ctx, assistant.Request{
@@ -331,26 +321,62 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 		Token:   a.agentTokens.Issue(userID),
 		UserID:  userID,
 		Tier:    string(user.Tier),
-		Context: assistant.Context{
-			TargetDate: target.String(),
-			Now:        tz.FormatInstant(now),
-			Timezone:   tz.Tokyo.String(),
-			Locale:     locale,
-			// Checked again when the reply comes back and when the proposal runs.
-			AllowProposal: pro,
-			// Checked again when the reply comes back.
-			AllowMemory: pro,
-			// Checked again when the reply comes back (its sources).
-			AllowSearch: pro,
-			Memories:    memoryItems,
-			Profile:     profile,
-			Events:      eventItems,
-			EventsRange: assistant.Range{From: evFrom.String(), To: evTo.String()},
-			Meals:       mealItems,
-			MealsRange:  assistant.Range{From: mealFrom.String(), To: mealTo.String()},
-		},
+		Context: assistantContext(d),
 	})
-	return reply, memories, err
+	return reply, d.Memories, err
+}
+
+// contextData is what askAssistant reads for one message.
+type contextData struct {
+	Target               tz.Date
+	Now                  time.Time
+	Locale               string
+	Pro                  bool
+	Profile              *store.Profile // nil before the user saves one
+	Memories             []store.Memory
+	Events               []store.ScheduleEvent
+	EventsFrom, EventsTo tz.Date
+	Meals                []store.MealRecord
+	MealsFrom, MealsTo   tz.Date
+}
+
+// assistantContext turns it into the context the AI service reads, the
+// format of contract/request.json.
+func assistantContext(d contextData) assistant.Context {
+	var profile any
+	if d.Profile != nil {
+		profile = toProfileJSON(*d.Profile)
+	}
+	memoryItems := make([]contextMemory, 0, len(d.Memories))
+	for _, m := range d.Memories {
+		memoryItems = append(memoryItems, contextMemory{ID: m.ID, Content: m.Content})
+	}
+	eventItems := make([]eventJSON, 0, len(d.Events))
+	for _, e := range d.Events {
+		eventItems = append(eventItems, toEventJSON(e))
+	}
+	mealItems := make([]mealJSON, 0, len(d.Meals))
+	for _, m := range d.Meals {
+		mealItems = append(mealItems, toMealJSON(m))
+	}
+	return assistant.Context{
+		TargetDate: d.Target.String(),
+		Now:        tz.FormatInstant(d.Now),
+		Timezone:   tz.Tokyo.String(),
+		Locale:     d.Locale,
+		// Checked again when the reply comes back and when the proposal runs.
+		AllowProposal: d.Pro,
+		// Checked again when the reply comes back.
+		AllowMemory: d.Pro,
+		// Checked again when the reply comes back (its sources).
+		AllowSearch: d.Pro,
+		Memories:    memoryItems,
+		Profile:     profile,
+		Events:      eventItems,
+		EventsRange: assistant.Range{From: d.EventsFrom.String(), To: d.EventsTo.String()},
+		Meals:       mealItems,
+		MealsRange:  assistant.Range{From: d.MealsFrom.String(), To: d.MealsTo.String()},
+	}
 }
 
 // --- internal API for the agent's query tools ---
