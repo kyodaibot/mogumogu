@@ -340,11 +340,12 @@ def build_graph(
 
 async def run_agent(
     model: ChatModel, source: DataSource, req: ReplyRequest, time: TimeBudget | None = None,
-    search: SearchProvider | None = None,
+    search: SearchProvider | None = None, trace: dict | None = None,
 ) -> Outcome:
     """Answers one message. Model and data-source errors propagate to the
     caller; search errors do not (the model answers without the results).
-    search is offered only when the context allows it."""
+    search is offered only when the context allows it. trace is the
+    tracing config (tracing.trace_config), merged into the graph's."""
     time = time or TimeBudget()
     counts = Counts()
     profile = req.context.profile
@@ -363,7 +364,7 @@ async def run_agent(
         "error": None,
     }
     try:
-        final = await graph.ainvoke(init, {"recursion_limit": RECURSION_LIMIT})
+        final = await graph.ainvoke(init, {**(trace or {}), "recursion_limit": RECURSION_LIMIT})
     except GraphRecursionError:
         return Outcome(None, "recursion_limit", counts=counts)
     finally:

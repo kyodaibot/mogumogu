@@ -18,6 +18,7 @@ from .schemas import Reply, ReplyRequest, Source
 from .search import FakeSearch, SearchProvider, TavilySearch
 from .time_budget import HARD_LIMIT_S, TimeBudget
 from .tools import GoClient
+from .tracing import make_langfuse, trace_config
 
 log = logging.getLogger("mogumogu_ai")
 log.setLevel(logging.INFO)
@@ -81,7 +82,12 @@ async def lifespan(app: FastAPI):
         app.state.model = make_model()
     if not hasattr(app.state, "search"):
         app.state.search = make_search()
-    log.info("model %s, search %s", type(app.state.model).__name__, type(app.state.search).__name__)
+    if not hasattr(app.state, "langfuse"):
+        app.state.langfuse = make_langfuse()
+    log.info(
+        "model %s, search %s, tracing %s", type(app.state.model).__name__,
+        type(app.state.search).__name__, "on" if app.state.langfuse else "off",
+    )
     base_url = os.environ.get("GO_INTERNAL_URL", "http://127.0.0.1:8081")
     # TimeBudget usually allows less; this bounds a query on its own.
     async with httpx.AsyncClient(base_url=base_url, timeout=5) as http:
@@ -89,6 +95,9 @@ async def lifespan(app: FastAPI):
         yield
     if app.state.search is not None:
         await app.state.search.aclose()
+    if app.state.langfuse is not None:
+        # Sends the traces still queued; bounded by LANGFUSE_TIMEOUT.
+        app.state.langfuse.shutdown()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -111,9 +120,12 @@ async def reply(req: ReplyRequest, request: Request):
     source = GoClient(request.app.state.http, req.token)
     time_budget = TimeBudget()
     watcher = asyncio.create_task(_watch_disconnect(request, time_budget))
+    trace = trace_config(req) if request.app.state.langfuse else None
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
-            outcome = await run_agent(request.app.state.model, source, req, time_budget, request.app.state.search)
+            outcome = await run_agent(
+                request.app.state.model, source, req, time_budget, request.app.state.search, trace,
+            )
     except TimeoutError:
         _log("timeout", started)
         return JSONResponse({"error": "timeout"}, status_code=503)

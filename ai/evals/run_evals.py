@@ -7,11 +7,16 @@ printed so a person can judge the rest. Costs a few cents per run.
 The web search cases marked "web" make real Tavily searches (TAVILY_API_KEY,
 a few of the free monthly credits per run) and are skipped without a key;
 the others use fixed results.
+
+With LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY set, every case is also a
+trace in Langfuse (environment "eval", tagged with the run's name, named
+after the case) with a "passed" score, so runs can be compared there.
 """
 
 import asyncio
 import itertools
 import os
+import subprocess
 import sys
 import time
 from datetime import date, timedelta
@@ -23,6 +28,7 @@ from mogumogu_ai.app import DEFAULT_MODEL_ID
 from mogumogu_ai.bedrock import BedrockModel
 from mogumogu_ai.schemas import ReplyRequest
 from mogumogu_ai.search import FakeSearch, SearchProvider, SearchResult, TavilySearch
+from mogumogu_ai.tracing import make_langfuse, trace_config
 
 
 class Source:
@@ -413,6 +419,15 @@ CASES = [
 ]
 
 
+def start_langfuse():
+    """The Langfuse client for this run, or None without keys."""
+    os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = "eval"
+    if not os.environ.get("LANGFUSE_RELEASE"):
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+        os.environ["LANGFUSE_RELEASE"] = sha
+    return make_langfuse()
+
+
 async def main() -> int:
     model = BedrockModel(os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID), os.environ.get("AWS_REGION", "ap-northeast-1"))
     failed = 0
@@ -427,12 +442,22 @@ async def main() -> int:
     for case in skipped:
         print(f"SKIP  {case.name}（没有 TAVILY_API_KEY）")
     cases = [c for c in cases if c not in skipped]
+    langfuse = start_langfuse()
+    run_name = time.strftime("eval-%Y%m%d-%H%M%S")
+    if langfuse:
+        print(f"Langfuse：环境 eval，标签 {run_name}")
     for case in cases:
         search = LoggedSearch(providers[case.search], case.source) if case.search else None
+        tier = "pro" if case.req.context.allow_memory else "normal"
+        trace = trace_config(case.req.model_copy(update={"tier": tier}), case.name, [run_name]) if langfuse else None
         started = time.monotonic()
-        outcome = await run_agent(model, case.source, case.req, None, search)
+        outcome = await run_agent(model, case.source, case.req, None, search, trace)
         ms = round((time.monotonic() - started) * 1000)
         problem = outcome.error or case.check(outcome, case.source) or in_language(outcome, case.req.context.locale)
+        if trace and (trace_id := trace["callbacks"][0].last_trace_id):
+            langfuse.create_score(
+                name="passed", value=1 if problem is None else 0, data_type="BOOLEAN", trace_id=trace_id, comment=problem,
+            )
         failed += problem is not None
         tokens[bool(case.req.history)].append(
             (outcome.input_tokens, outcome.output_tokens, outcome.cache_read_tokens, outcome.cache_write_tokens))
@@ -479,6 +504,8 @@ async def main() -> int:
               f"输入计费量折合 {billed:,.0f} token，不缓存时 {total_in:,} token（{billed / total_in - 1:+.0%}）")
     if web:
         await web.aclose()
+    if langfuse:
+        langfuse.shutdown()
     print(f"强制提交：{forced} 条")
     print(f"\n{len(cases) - failed}/{len(cases)} passed")
     return 1 if failed else 0

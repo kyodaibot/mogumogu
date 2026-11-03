@@ -162,6 +162,11 @@ func TestIntegrationAssistantContext(t *testing.T) {
 		ctx.Locale != "en" {
 		t.Fatalf("request: %q %+v", req.Message, ctx)
 	}
+	var me meJSON
+	b.expect(200, "GET", "/api/auth/me", nil).json(t, &me)
+	if req.UserID != me.User.ID || req.Tier != "normal" {
+		t.Fatalf("who asked: %d %q, want %d normal", req.UserID, req.Tier, me.User.ID)
+	}
 	if !strings.Contains(fmtJSON(t, ctx.Profile), `"allergens":["虾"]`) {
 		t.Fatalf("profile: %s", fmtJSON(t, ctx.Profile))
 	}

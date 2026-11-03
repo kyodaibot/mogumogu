@@ -130,8 +130,8 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 | 容器 | Caddy（HTTPS 证书自动申请和续期）→ Nginx → 后端 / AI 服务；`migrate` 每次部署先执行一次 | `deploy/compose.yaml`、`deploy/Caddyfile` |
 | 数据库 | RDS PostgreSQL 17，私有子网，只允许服务器访问，强制 TLS；每天自动备份，保留 7 天 | `infra/main/database.tf` |
 | 镜像 | ECR 的 `mogumogu/{backend,web,ai}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
-| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥和 Tavily 的 API Key 是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、6.12、`infra/main/settings.tf` |
-| 外部服务 | Tavily（网络搜索，只发送搜索关键词），免费额度，不绑卡（6.12） | `deploy/compose.yaml` |
+| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥、Tavily 的 API Key 和 Langfuse 的两个 Key 是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、6.12、6.13、`infra/main/settings.tf` |
+| 外部服务 | Tavily（网络搜索，只发送搜索关键词），免费额度，不绑卡（6.12）；Langfuse 日本区域（AI 服务的 trace，含完整内容，保留 30 天），免费计划（6.13） | `deploy/compose.yaml` |
 | 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶、向日志组写入日志。**没有任何长期 Access Key** | `infra/main/iam.tf` |
 | 日志和告警 | 所有容器的日志写入 CloudWatch Logs `/mogumogu/app`，保留 14 天；访客收到 5xx 时发邮件（6.6） | `infra/main/logs.tf`、`deploy/compose.yaml` |
 | 费用告警 | AWS Budgets，每月 50 美元，超过 50%、75%、100% 和预测超过 100% 时发邮件 | `infra/main/budgets.tf` |
@@ -143,7 +143,7 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 只需要做一次，按顺序执行。环境被删除后重建时也按这个顺序：
 
 1. **状态桶**：`cd infra/bootstrap && AWS_PROFILE=Teiyou terraform init && AWS_PROFILE=Teiyou terraform apply`。它的状态文件留在本地，不提交。
-2. **密钥**：`AWS_PROFILE=Teiyou scripts/put-secrets.sh`。数据库密码也在其中，必须在第 3 步之前创建。另外按 6.12 创建 Tavily 的 API Key，否则 `deploy.sh` 读不到这个参数，部署会失败。
+2. **密钥**：`AWS_PROFILE=Teiyou scripts/put-secrets.sh`。数据库密码也在其中，必须在第 3 步之前创建。另外按 6.12 创建 Tavily 的 API Key、按 6.13 创建 Langfuse 的两个 Key，否则 `deploy.sh` 读不到这些参数，部署会失败。
 3. **其余资源**：把 `infra/main/terraform.tfvars.example` 复制为 `terraform.tfvars`（已被 gitignore），填上收告警的邮箱，然后在 `infra/main` 里执行 `terraform init` 和 `terraform apply`。最后会输出公网 IP。
 4. **DNS**：在 name.com 添加 A 记录 `mogumogu` → 公网 IP。生效后 Caddy 才能申请到证书。
 5. **发布**：按 6.3 执行 `make push` 和 `make deploy`。
@@ -377,6 +377,7 @@ docker compose run --rm migrate /admin tier <username> pro     # 或 normal
 ```
 
 - 线上借用 `migrate` 服务运行，因为它用的是同一个 backend 镜像，并且已经有数据库的连接设置；`/admin` 替换了它原来的 `/migrate up` 命令，不会执行迁移。
+- `users` 的输出有用户 ID，在 Langfuse 里按用户查 trace 时用（6.13）。
 - 输出同样会写入 CloudWatch Logs（日志流 `mogumogu-migrate-run-…`），其中包含用户名。
 - 不要把演示账号设为 Pro：它的密码是公开的，任何人都能用它把全站当天的额度用完。
 
@@ -428,6 +429,34 @@ AWS_PROFILE=Teiyou aws ssm get-parameter --region ap-northeast-1 --name /mogumog
 **本地开发：** `.env` 中 `SEARCH_PROVIDER` 不设置或为 `off` 时不搜索；设为 `tavily` 并填上自己的 `TAVILY_API_KEY` 才会真的搜索（会用掉免费额度）；`fake` 返回固定结果，不联网。`SEARCH_PROVIDER=tavily` 而 Key 为空时，AI 服务记一条警告并关闭搜索，照常启动。`make ai-eval` 中标为 web 的用例使用真实搜索，每次运行约用 3 credit，没有 Key 时跳过。
 
 **额度用完时：** Tavily 返回 432，日志中出现 `web search failed: 432`（6.6 的「搜索失败的原因」），`search_errors` 增加。饮食助手告诉用户现在查不到，照常回答，消息仍返回 200，5xx 告警不会触发。额度每月重置；用量在 Tavily 控制台查看。
+
+### 6.13 Trace（Langfuse）
+
+AI 服务把每条消息的执行过程作为一条 trace 发给 Langfuse Cloud 的日本区域（`https://jp.cloud.langfuse.com`，东京）：图的每个节点、每次模型调用的输入和输出（含 token）、工具参数和结果、校验驳回的原因。**内容完整，包括 Profile、过敏原、记忆、饮食记录和搜索关键词**（ADR 0002）。CloudWatch 日志不变，仍然不含内容。
+
+**注册（一次）：** 在 `https://jp.cloud.langfuse.com` 注册（Hobby 免费计划：每月 5 万 unit，数据保留 30 天；一条消息约 7–12 unit：trace 本身加上 6–10 个 observation（2026-11-03 实测，模型调用越多越多）。全站每天 100 条用满时一个月约 3 万 unit），**开启二步验证**：能登录的人可以看到所有用户的数据。建一个项目，在 Settings → API Keys 创建一对 Key（public `pk-lf-…`、secret `sk-lf-…`）。本地和线上可以共用这个项目，用环境区分。
+
+**线上：** 在自己的终端把两个 Key 存入 SSM（不显示在屏幕上）：
+
+```zsh
+for name in langfuse_public_key langfuse_secret_key; do
+  read -rs "k?$name: "; echo
+  umask 077; f=$(mktemp)
+  printf '{"Name":"/mogumogu/%s","Type":"SecureString","Value":"%s","Tags":[{"Key":"Project","Value":"mogumogu"}]}' "$name" "$k" > "$f"
+  AWS_PROFILE=Teiyou aws ssm put-parameter --region ap-northeast-1 --cli-input-json "file://$f" >/dev/null && echo "$name created"
+  rm -f "$f"; unset k
+done
+# 确认（只显示名字和类型）
+AWS_PROFILE=Teiyou aws ssm get-parameters --region ap-northeast-1 --names /mogumogu/langfuse_public_key /mogumogu/langfuse_secret_key --query 'Parameters[].[Name,Type]' --output text
+```
+
+`deploy.sh` 每次部署时把它们读进服务器的 `.env`；`deploy/compose.yaml` 中环境为 `prod`，版本（release）是部署的提交号。更换 Key 的做法和 6.12 相同：新建、加 `"Overwrite":true` 重新写入、`make deploy TAG=<线上当前的提交号>`、删除旧 Key。
+
+**本地：** `.env` 中两个 Key 都填上才开启，否则关闭（CI 和 pytest 都不开）。`LANGFUSE_BASE_URL` 一定要设为日本区域，不设时 SDK 发往欧盟区域。`make dev` 的环境是 `local`（`LANGFUSE_TRACING_ENVIRONMENT` 不设时也是）；`make ai-eval` 一律是 `eval`，版本是当前提交号，每次运行有一个标签 `eval-<日期时间>`，每个用例的 trace 以用例名命名，并带一个 `passed` 打分（1 或 0，未通过时 comment 是原因）。在 Langfuse 里按这个标签筛选，就能比较两次运行。
+
+**查一条消息：** Tracing → Traces，按环境 `prod` 筛选，再按 User ID（数据库里的用户 ID，用 6.10 的 `users` 查）或时间找到那条 `reply`。标签有等级（`normal` / `pro`）和语言（`ja` / `en`）。CloudWatch 日志中没有 trace ID，用时间和用户对上。
+
+**不可用或额度用完时：** SDK 在后台批量发送，失败只丢 trace，回复不受影响；AI 服务关闭时最多等 `LANGFUSE_TIMEOUT`（默认 5 秒）把剩下的发完。免费额度用完后当月不再接收新的 trace。用量在 Langfuse 的 Settings → Billing 查看。
 
 ## 7. 常见问题
 
