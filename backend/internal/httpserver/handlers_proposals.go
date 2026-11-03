@@ -24,7 +24,9 @@ const (
 )
 
 // errInvalidProposal means the AI service staged changes Go refuses; the
-// message is then answered like any other AI service failure.
+// message is then answered like any other AI service failure. The AI service
+// checks the same rules first (tools.Staging, contract/), so this only
+// happens when the two disagree: a bug, not a model mistake.
 var errInvalidProposal = errors.New("invalid proposal")
 
 // proposedMealJSON is a meal record in a proposal. ID is absent for a record

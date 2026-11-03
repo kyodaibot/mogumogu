@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ApiError, api, type MealRecordInput, type Recommendation } from '../api'
-import { MAX_TURNS, historyOf, mealQuestions, presetQuestions, quotaText } from '../lib/assistant'
+import { MAX_LENGTH, MAX_TURNS, historyOf, mealQuestions, presetQuestions, quotaText } from '../lib/assistant'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { errorMessage } from '../lib/messages'
 import { newProposalState } from '../lib/proposals'
@@ -22,8 +22,6 @@ import SourceList from './SourceList.vue'
 const props = defineProps<{ date: Ymd; today: Ymd }>()
 // Meal records were added or changed from the chat; the calendar reloads.
 const emit = defineEmits<{ 'meals-changed': [] }>()
-
-const MAX_LENGTH = 500
 
 const open = ref(false)
 // The page is only shown to a logged-in user.

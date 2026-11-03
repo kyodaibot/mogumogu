@@ -4,6 +4,7 @@ from langchain_core.messages import ToolMessage
 from mogumogu_ai.agent import run_agent
 from mogumogu_ai.model import FakeModel, reply, tool_call
 from mogumogu_ai.prompt import first_message
+from mogumogu_ai.schemas import Meal
 from mogumogu_ai.tools import MAX_CHANGES, QueryBudget, Staging, run_query
 
 from .conftest import FakeSource, make_request, turn
@@ -12,6 +13,14 @@ pytestmark = pytest.mark.anyio
 
 # 4*20 + 4*70 + 9*15 = 495 ≈ 503.
 RAMEN = {"calories": 503, "protein_g": 20.4, "fat_g": 15, "carbs_g": 70.2}
+
+
+def meal(id: int, **fields) -> Meal:
+    """A record the model has seen: a lunch of ラーメン with RAMEN rounded."""
+    return Meal.model_validate({
+        "id": id, "date": "2026-10-27", "meal_type": "lunch", "content": "ラーメン",
+        "calories": 500, "protein_g": 20, "fat_g": 15, "carbs_g": 70, **fields,
+    })
 
 
 def create(**args):
@@ -54,7 +63,7 @@ def test_bad_create_is_sent_back(args, error):
 
 
 def test_only_seen_records_can_change():
-    staging = Staging([7], [])
+    staging = Staging([meal(7)], [])
 
     assert "no record with id 8" in staging.stage("delete_meal", {"meal_id": 8})
     assert staging.stage("delete_meal", {"meal_id": 7}).startswith("Staged")
@@ -63,7 +72,7 @@ def test_only_seen_records_can_change():
 
 
 def test_update_gives_only_the_fields_that_change():
-    staging = Staging([1, 2, 3, 4], [])
+    staging = Staging([meal(i) for i in range(1, 5)], [])
 
     staging.stage("update_meal", {"meal_id": 1, "meal_type": "snack", "date": None})
     staging.stage("update_meal", {"meal_id": 2, "content": "うどん", "nutrition": None})
@@ -92,12 +101,40 @@ def test_allergen_in_a_record_is_staged_with_a_note():
     assert text.startswith("Staged") and "allergen えび" in text
 
 
+@pytest.mark.parametrize(("args", "changes"), [
+    # Each gives a value the record already has (Go's sameMeal).
+    ({"content": "ラーメン", "nutrition": RAMEN}, False),
+    ({"meal_type": "lunch"}, False),
+    ({"date": "2026-10-27", "meal_type": "lunch"}, False),
+    ({"nutrition": {"calories": 498, "protein_g": 20.3, "fat_g": 15, "carbs_g": 69.6}}, False),  # rounds to the same
+    # A real change, even if small.
+    ({"nutrition": None}, True),
+    ({"meal_type": "dinner"}, True),
+    ({"content": "味噌ラーメン", "nutrition": RAMEN}, True),
+])
+def test_update_that_changes_nothing_is_sent_back(args, changes):
+    staging = Staging([meal(1)], [])
+    text = staging.stage("update_meal", {"meal_id": 1, **args})
+
+    assert text.startswith("Staged") == changes, text
+    if not changes:
+        assert "nothing changes" in text and staging.changes == []
+
+
+def test_unchanged_is_checked_against_a_record_without_nutrition():
+    staging = Staging([meal(1, calories=None, protein_g=None, fat_g=None, carbs_g=None)], [])
+
+    assert "nothing changes" in staging.stage("update_meal", {"meal_id": 1, "nutrition": None})
+    assert staging.stage("update_meal", {"meal_id": 1, "nutrition": RAMEN}).startswith("Staged")
+
+
 async def test_query_results_make_records_seen():
-    seen: set[int] = set()
-    items = [{"id": 42, "date": "2026-09-01", "meal_type": "dinner", "content": "鍋"}]
+    seen: dict[int, Meal] = {}
+    items = [{"id": 42, "date": "2026-09-01", "meal_type": "dinner", "content": "鍋", "calories": None,
+              "protein_g": None, "fat_g": None, "carbs_g": None, "created_at": "x", "updated_at": "x"}]
     await run_query(FakeSource(items), "get_meals", {"from_date": "2026-09-01", "to_date": "2026-09-01"}, QueryBudget(), seen)
 
-    assert seen == {42}
+    assert list(seen) == [42] and seen[42].content == "鍋"
 
 
 async def run(script, message="お昼にラーメン食べた", allow_proposal=True, source=None, history=None):

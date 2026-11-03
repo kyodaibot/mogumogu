@@ -1,0 +1,129 @@
+{
+  "reply": "豚骨ラーメンを昼食に記録します。カードで確認してください。夕食の候補も3つ挙げます。",
+  "recommendations": [
+    {
+      "name": "鶏むね肉の塩焼き定食",
+      "description": "焼いた鶏むね肉とご飯、みそ汁",
+      "reason": "脂質を抑えてたんぱく質をとれます",
+      "estimate": {
+        "serving": {
+          "calories": 620,
+          "protein_g": 42,
+          "fat_g": 12,
+          "carbs_g": 85
+        },
+        "per_100g": {
+          "calories": 138,
+          "protein_g": 9,
+          "fat_g": 3,
+          "carbs_g": 19
+        }
+      }
+    },
+    {
+      "name": "鮭の野菜あんかけ",
+      "description": "焼き鮭に野菜のあんかけ",
+      "reason": "昼の脂質が多かったので軽めに",
+      "estimate": {
+        "serving": {
+          "calories": 450,
+          "protein_g": 30,
+          "fat_g": 14,
+          "carbs_g": 45
+        },
+        "per_100g": {
+          "calories": 113,
+          "protein_g": 8,
+          "fat_g": 4,
+          "carbs_g": 11
+        }
+      }
+    },
+    {
+      "name": "豆腐とわかめのうどん",
+      "description": "温かいうどんに豆腐とわかめ",
+      "reason": "消化がよく夜遅くても食べやすい",
+      "estimate": {
+        "serving": {
+          "calories": 480,
+          "protein_g": 20,
+          "fat_g": 8,
+          "carbs_g": 80
+        },
+        "per_100g": {
+          "calories": 96,
+          "protein_g": 4,
+          "fat_g": 2,
+          "carbs_g": 16
+        }
+      }
+    }
+  ],
+  "ask_meal_type": false,
+  "meal_type": "dinner",
+  "sources": [
+    {
+      "title": "北部食堂 メニュー",
+      "url": "https://example.com/north-menu"
+    }
+  ],
+  "changes": [
+    {
+      "op": "create",
+      "meal": {
+        "date": "2026-10-27",
+        "meal_type": "lunch",
+        "content": "豚骨ラーメン",
+        "nutrition": {
+          "calories": 700,
+          "protein_g": 28,
+          "fat_g": 30,
+          "carbs_g": 80
+        }
+      }
+    },
+    {
+      "op": "create",
+      "meal": {
+        "date": "2026-10-27",
+        "meal_type": "snack",
+        "content": "りんご",
+        "nutrition": null
+      }
+    },
+    {
+      "op": "update",
+      "meal_id": 21,
+      "meal": {
+        "meal_type": "lunch"
+      }
+    },
+    {
+      "op": "update",
+      "meal_id": 22,
+      "meal": {
+        "content": "トーストと牛乳",
+        "nutrition": null
+      }
+    },
+    {
+      "op": "delete",
+      "meal_id": 99
+    }
+  ],
+  "memory_changes": [
+    {
+      "op": "create",
+      "content": "豚骨ラーメンが好き"
+    },
+    {
+      "op": "update",
+      "memory_id": 3,
+      "content": "辛いものは平気"
+    },
+    {
+      "op": "delete",
+      "memory_id": 4
+    }
+  ]
+}

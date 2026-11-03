@@ -20,7 +20,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from .model import ToolSpec
-from .schemas import MealType, Memory, ServingNutrition, SubmitReply
+from .schemas import Meal, MealType, Memory, ServingNutrition, SubmitReply
 from .search import SearchProvider
 
 MAX_SPAN_DAYS = 31
@@ -203,10 +203,10 @@ class QueryBudget:
 
 
 async def run_query(
-    source: DataSource, name: str, args: dict, budget: QueryBudget, seen_meals: set[int] | None = None
+    source: DataSource, name: str, args: dict, budget: QueryBudget, seen_meals: dict[int, Meal] | None = None
 ) -> str:
     """Runs one query tool call and returns the text sent back to the model.
-    The ids of meals it returns are added to seen_meals.
+    The meals it returns are added to seen_meals, by id.
 
     Bad arguments become an error text, so the model can correct itself; other
     failures (Go unreachable, token rejected) raise and end the request.
@@ -231,7 +231,7 @@ async def run_query(
     drop = _DROP if kind == "meals" else _DROP | {"id"}
     rows = [{k: v for k, v in item.items() if k not in drop} for item in items]
     if kind == "meals" and seen_meals is not None:
-        seen_meals.update(item["id"] for item in items)
+        seen_meals.update((m.id, m) for m in map(Meal.model_validate, items))
     text = json.dumps(
         {"from": start.isoformat(), "to": end.isoformat(), "items": rows},
         ensure_ascii=False,
@@ -303,8 +303,9 @@ class Staging:
     change again before saving it.
     """
 
-    def __init__(self, seen_meals: Iterable[int], allergens: list[str]):
-        self.seen_meals = set(seen_meals)
+    def __init__(self, seen_meals: Iterable[Meal], allergens: list[str]):
+        # The records the model has seen, as they are now: id -> record.
+        self.seen_meals = {m.id: m for m in seen_meals}
         self.allergens = [a.strip() for a in allergens if a.strip()]
         self.changes: list[dict] = []
         self._staged_ids: set[int] = set()
@@ -345,6 +346,11 @@ class Staging:
                     return "Not staged: give at least one field that changes"
                 if "content" in fields and "nutrition" not in fields:
                     return "Not staged: the content changes, so give a new nutrition estimate too (or null for none)"
+                if _unchanged(self.seen_meals[meal_id], fields):
+                    return (
+                        f"Not staged: record {meal_id} already has these values, so nothing changes. "
+                        "Stage only what differs from the record"
+                    )
                 change = {"op": "update", "meal_id": meal_id, "meal": fields}
                 content = parsed.content
             self._staged_ids.add(meal_id)
@@ -361,6 +367,19 @@ class Staging:
 
 def _nutrition(n: ServingNutrition | None) -> dict | None:
     return n.rounded().model_dump() if n else None
+
+
+_NUTRIENTS = ("calories", "protein_g", "fat_g", "carbs_g")
+
+
+def _unchanged(before: Meal, fields: dict) -> bool:
+    """Whether an update leaves the record as it is. Go refuses such a change
+    (sameMeal in handlers_proposals.go), which would fail the whole message."""
+    after = before.model_dump(mode="json")
+    after.update({k: v for k, v in fields.items() if k != "nutrition"})
+    if "nutrition" in fields:
+        after.update(fields["nutrition"] or dict.fromkeys(_NUTRIENTS))
+    return after == before.model_dump(mode="json")
 
 
 def _normalized(text: str) -> str:
