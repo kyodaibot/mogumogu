@@ -2,7 +2,7 @@
 # (compose file, Caddyfile, deploy.sh) in a small S3 bucket.
 
 locals {
-  services = ["backend", "web", "ai"]
+  services = ["backend", "web", "ai", "importer"]
 }
 
 resource "aws_ecr_repository" "app" {

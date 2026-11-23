@@ -6,4 +6,5 @@ schedule:
   skip_delayed_by: 2m
 
 +import_due_cafeterias:
-  sh>: uv run --locked jobs.py
+  # In the image (importer/Dockerfile) python is the importer's venv.
+  sh>: python jobs.py
