@@ -40,6 +40,7 @@ type Deps struct {
 	// The meal assistant: the AI service, the tokens its query tools use, and
 	// the daily message quotas.
 	Assistant       Replier
+	MenuRequests    *MenuRequests
 	AgentTokens     *auth.AgentTokens
 	AssistantLimits DailyLimits
 }
@@ -59,9 +60,10 @@ func (l DailyLimits) forTier(t store.Tier) int {
 
 // InternalDeps are the internal router's collaborators.
 type InternalDeps struct {
-	Logger      *slog.Logger
-	Store       *store.Store
-	AgentTokens *auth.AgentTokens
+	Logger       *slog.Logger
+	Store        *store.Store
+	MenuRequests *MenuRequests
+	AgentTokens  *auth.AgentTokens
 }
 
 type api struct {
@@ -76,6 +78,7 @@ type api struct {
 	cookieSecure     bool
 
 	assistant       Replier
+	menuRequests    *MenuRequests
 	agentTokens     *auth.AgentTokens
 	assistantLimits DailyLimits
 }
@@ -108,7 +111,7 @@ func NewRouter(d Deps) *gin.Engine {
 		logger: d.Logger, store: d.Store, sessions: d.Sessions, csrf: d.CSRF,
 		loginLimiter: d.LoginLimiter, registerLimiter: d.RegisterLimiter, assistantLimiter: d.AssistantLimiter,
 		allowedOrigins: d.AllowedOrigins, cookieSecure: d.CookieSecure,
-		assistant: d.Assistant, agentTokens: d.AgentTokens, assistantLimits: d.AssistantLimits,
+		assistant: d.Assistant, agentTokens: d.AgentTokens, menuRequests: d.MenuRequests, assistantLimits: d.AssistantLimits,
 	}
 	app := r.Group("/api", a.resolveSession)
 
@@ -121,6 +124,7 @@ func NewRouter(d Deps) *gin.Engine {
 	private := app.Group("", a.requireAuth, a.csrfProtect)
 	private.POST("/auth/logout", a.logout)
 	private.GET("/auth/me", a.me)
+	private.PUT("/auth/me/campus", a.putCampus)
 
 	private.GET("/profile", a.getProfile)
 	private.PUT("/profile", a.putProfile)
@@ -156,10 +160,11 @@ func NewInternalRouter(d InternalDeps) *gin.Engine {
 	r.Use(requestLogger(d.Logger), gin.Recovery())
 	r.NoRoute(abortNotFound)
 
-	a := &api{logger: d.Logger, store: d.Store, agentTokens: d.AgentTokens}
+	a := &api{logger: d.Logger, store: d.Store, agentTokens: d.AgentTokens, menuRequests: d.MenuRequests}
 	agent := r.Group("/internal/agent", a.agentAuth)
 	agent.GET("/events", a.agentEvents)
 	agent.GET("/meals", a.agentMeals)
+	agent.GET("/menu", a.agentMenu)
 	return r
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, ApiError, type Goal, type Profile } from '../api'
+import { api, ApiError, CAMPUSES, type Goal, type Profile } from '../api'
 import { session } from '../session'
 import { errorMessage, fieldMessages } from '../lib/messages'
 import { t } from '../i18n'
@@ -11,6 +11,24 @@ const router = useRouter()
 
 // Number inputs give '' when empty; that is sent as null so the API reports "required".
 type NumberField = number | ''
+
+// The campus belongs to the account and is saved on its own, with or without a profile.
+const campus = ref(session.state.user!.campus)
+const campusStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+const campusError = ref('')
+
+async function saveCampus() {
+  campusStatus.value = 'saving'
+  campusError.value = ''
+  try {
+    await session.setCampus(campus.value)
+    campusStatus.value = 'saved'
+  } catch (err) {
+    campus.value = session.state.user!.campus
+    campusError.value = fieldMessages(err).campus ?? errorMessage(err)
+    campusStatus.value = 'idle'
+  }
+}
 
 const form = reactive({
   height_cm: '' as NumberField,
@@ -126,6 +144,17 @@ onMounted(load)
     <p class="lead">{{ t.profile.lead }}</p>
     <p v-if="isNew" class="banner info">{{ t.profile.welcome }}</p>
 
+    <section class="card form campus">
+      <label>
+        {{ t.campus.label }}
+        <select v-model="campus" name="campus" :disabled="campusStatus === 'saving'" @change="saveCampus">
+          <option v-for="c in CAMPUSES" :key="c" :value="c">{{ t.campus[c] }}</option>
+        </select>
+        <small v-if="campusError" class="field-error" role="alert">{{ campusError }}</small>
+        <small v-else-if="campusStatus === 'saved'" class="muted" role="status">{{ t.profile.saved }}</small>
+      </label>
+    </section>
+
     <p v-if="loading" class="muted">{{ t.common.loading }}</p>
     <div v-else-if="loadError" class="banner error" role="alert">
       {{ loadError }}
@@ -200,6 +229,10 @@ onMounted(load)
 </template>
 
 <style scoped>
+.campus {
+  margin-bottom: 1rem;
+}
+
 .profile h1 {
   margin: 0 0 0.375rem;
 }

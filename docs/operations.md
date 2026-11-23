@@ -74,12 +74,11 @@ make db-backup
 
 ### 5.2 恢复演练（不影响开发库）
 
-把备份恢复到一个新建的临时库，检查后删除。库名以 `mogumogu_restore_` 开头，以免和开发库混淆。在仓库根目录执行：
+把备份恢复到一个新建的临时库，检查后删除。库名以 `mogumogu_restore_` 开头，以免和开发库混淆。演练新备份时，按 5.1 停止应用，从备份到核对结束都保持开发库无写入、无迁移。在仓库根目录执行：
 
 ```sh
 F=backups/mogumogu-20261024-161241.dump   # 要检查的备份
 R=mogumogu_restore_check                  # 临时库
-Q="SELECT 'users', count(*) FROM users UNION ALL SELECT 'profiles', count(*) FROM profiles UNION ALL SELECT 'schedule_events', count(*) FROM schedule_events UNION ALL SELECT 'meal_records', count(*) FROM meal_records UNION ALL SELECT 'revoked_tokens', count(*) FROM revoked_tokens"
 
 # 1. 新建临时库
 docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" "$1"' _ "$R"
@@ -87,17 +86,24 @@ docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" "$1"' _ "$R"
 # 2. 恢复；出错时立即停止，退出码不为 0
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$1" --no-owner --exit-on-error' _ "$R" < "$F"
 
-# 3. 检查：迁移版本应为 5、dirty 为 f；两边各表行数应相同
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$1" -At -c "SELECT version, dirty FROM schema_migrations"' _ "$R"
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$1" -At -c "$2"' _ "$R" "$Q"
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"' _ "$Q"
+# 3. 核对迁移版本、dirty 状态和 public 中各表的实际行数
+check_db() {
+  docker compose exec -T postgres sh -c 'exec psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "${1:-$POSTGRES_DB}"' _ "$1" <<'SQL'
+SELECT version, dirty FROM public.schema_migrations;
+SELECT format('SELECT %L, count(*) FROM %I.%I', tablename, schemaname, tablename)
+FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
+\gexec
+SQL
+}
+check_db ""     # 源库
+check_db "$R"   # 恢复库
 
 # 4. 删除临时库（检查失败时也要执行）
 docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 ```
 
 - `sh -c '…' _ "$R"` 的写法把参数传进容器，用户名和库名都取自容器内的环境变量，不需要在命令里写密码。
-- 行数不同时，最可能的原因是备份之后又有写入。停止应用后重新备份、再演练一次。
+- 新备份的两份输出应一致，且 `dirty` 应为 `f`。演练旧备份时，用备份时记录的迁移版本和行数核对；缺少当时的记录时，只能确认备份能恢复并查看恢复后的状态。
 
 2026-10-24 实际演练的结果：恢复成功，迁移版本 5、`dirty = f`，5 张表的行数与开发库一致，临时库已删除，开发库的行数没有变化。
 
@@ -341,7 +347,7 @@ read -rs DEMO_PASSWORD && export DEMO_PASSWORD   # 密码不会显示，也不�
 node scripts/seed-demo.mjs                        # 默认作用于线上；SEED_URL=http://localhost:8000 可用于本地
 ```
 
-日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号的密码是公开的，所以始终保持 Normal 等级（6.10），每天最多可以问 AI 30 次。全站每天合计 100 次。
+日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号的密码是公开的，所以始终保持 Normal 等级（6.10）。个人和全站额度见 [API 约定 §9.2](api.md#92-调用额度)。
 
 ### 6.9 本地测试账号
 
@@ -457,6 +463,51 @@ AWS_PROFILE=Teiyou aws ssm get-parameters --region ap-northeast-1 --names /mogum
 **查一条消息：** Tracing → Traces，按环境 `prod` 筛选，再按 User ID（数据库里的用户 ID，用 6.10 的 `users` 查）或时间找到那条 `reply`。标签有等级（`normal` / `pro`）和语言（`ja` / `en`）。CloudWatch 日志中没有 trace ID，用时间和用户对上。
 
 **不可用或额度用完时：** SDK 在后台批量发送，失败只丢 trace，回复不受影响；AI 服务关闭时最多等 `LANGFUSE_TIMEOUT`（默认 5 秒）把剩下的发完。免费额度用完后当月不再接收新的 trace。用量在 Langfuse 的 Settings → Billing 查看。
+
+### 6.14 食堂菜单导入（importer）
+
+`importer/` 是独立于 Go 后端和 AI 服务的 Python 程序，读取生协公开的菜单和营业时间，写入 7 张菜单相关表（计划见 `plans/cafeteria-menus.md`）。用户请求只读数据库，从不等待官网。
+
+**每次运行做什么：** `jobs.py` 对每家食堂各推进一步：08:00 起是早间采集，10:30 起是午前复查。失败的部分记在 `menu_import_jobs`，按 10 分钟、30 分钟、之后每小时重试，跨日后不再处理前一天。同一家食堂用 PostgreSQL advisory lock 保证只有一个进程在采集。所以调度器只需要「每分钟跑一次」，到期与否由任务表决定，重启或漏跑都能接着做。`importer/menus.dig` 是 Digdag 的写法：日本时间 08:00–23:59 每分钟一次。
+
+**本地：**
+
+```sh
+make menu-import              # 七家食堂各推进一步（08:00 前什么都不做）
+make menu-import STORE=650111 # 只处理中央食堂
+uv run scripts/kyoto_menu.py --store 650111   # 只打印官网菜单 JSON，不写数据库
+```
+
+本地默认用 `.env` 里的 `DB_USER`；设了 `MENU_DATABASE_URL` 时用它。
+
+**专用数据库角色（线上）：** 导入器只应能改菜单表。以管理员身份用 psql 连上 RDS 执行一次（`\password` 交互输入密码，不进文件或历史）：
+
+```sql
+CREATE ROLE menu_importer LOGIN;
+\password menu_importer
+GRANT CONNECT ON DATABASE mogumogu TO menu_importer;
+GRANT USAGE ON SCHEMA public TO menu_importer;
+GRANT SELECT ON cafeterias TO menu_importer;
+GRANT SELECT, INSERT, UPDATE ON cafeteria_hours, menu_snapshots, menu_items, menu_import_jobs TO menu_importer;
+```
+
+它不能读 `users`、饮食记录等用户数据。连接串存入 SSM（做法同 6.12），作为 `MENU_DATABASE_URL` 传给导入器。
+
+**临时营业公告：** 生协把学园祭、节假日等特别安排发布为 PDF（图片）。`importer/hours_notices.json` 是人工核对过的时段表，以 PDF 的 SHA-256 为键。官网换了新 PDF 而表里没有它时，相关食堂的营业时间记为「未知」，卡片附官网链接，菜单照常导入。核对新 PDF 后在表中加一项即可。
+
+**查看进度：**
+
+```sql
+-- 今天每家食堂的最新快照和最后核对时间
+SELECT c.name, s.version, s.checked_at FROM cafeterias c
+LEFT JOIN LATERAL (SELECT * FROM menu_snapshots m WHERE m.cafeteria_id=c.id
+  AND m.menu_date=(now() AT TIME ZONE 'Asia/Tokyo')::date ORDER BY version DESC LIMIT 1) s ON true;
+-- 正在重试的任务
+SELECT cafeteria_id, phase, attempts, next_retry_at, last_error FROM menu_import_jobs
+WHERE menu_date=(now() AT TIME ZONE 'Asia/Tokyo')::date AND next_retry_at IS NOT NULL;
+```
+
+**线上调度：** 尚未部署。需要在服务器上安装 Digdag（或用等价的每分钟 cron）运行 `importer/`，并建好上面的角色。
 
 ## 7. 常见问题
 

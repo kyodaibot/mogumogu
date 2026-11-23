@@ -72,6 +72,8 @@ admin_sql "CREATE DATABASE ${E2E_DB}"
 DB_CREATED=1
 (cd backend && DB_NAME="$E2E_DB" go run ./cmd/migrate up >/dev/null)
 
+docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$1"' _ "$E2E_DB" < e2e/cafeteria.sql
+
 DB_NAME="$E2E_DB" APP_PORT="$BACKEND_PORT" INTERNAL_PORT="$BACKEND_INTERNAL_PORT" ALLOWED_ORIGINS="$BASE_URL" \
 	AI_SERVICE_URL="http://127.0.0.1:${AI_PORT}" \
 	./backend/bin/server >"$WORK_DIR/backend.log" 2>&1 &

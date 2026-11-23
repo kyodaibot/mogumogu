@@ -19,8 +19,9 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from .cafeteria import GET_MENU, MenuSource
 from .model import ToolSpec
-from .schemas import Meal, MealType, Memory, ServingNutrition, SubmitReply
+from .schemas import Meal, MealType, Memory, MenuSubmitReply, ServingNutrition, SubmitReply
 from .search import SearchProvider
 
 MAX_SPAN_DAYS = 31
@@ -67,14 +68,14 @@ SUBMIT_REPLY = ToolSpec(
 class WebSearchArgs(BaseModel):
     query: str = Field(
         min_length=1, max_length=200,
-        description="Search keywords, such as 京都大学 北部食堂 メニュー. Never include the user's profile, "
+        description="Search keywords for external places or products. Never include the user's profile, "
         "allergens, memories or records",
     )
 
 
 WEB_SEARCH = ToolSpec(
     "web_search",
-    "Search the web for facts outside the context, such as a cafeteria's menu or a shop's opening hours. "
+    "Search the web for facts outside the context, such as a shop's opening hours. For Kyoto University menus use get_cafeteria_menu. "
     "Returns up to 5 results with title, url and an extract.",
     WebSearchArgs,
 )
@@ -148,19 +149,22 @@ STAGING_TOOLS = (CREATE_MEAL, UPDATE_MEAL, DELETE_MEAL)
 MEMORY_TOOLS = (REMEMBER, UPDATE_MEMORY, FORGET)
 
 
-def tools_for(allow_proposal: bool, allow_memory: bool = False, allow_search: bool = False) -> tuple[ToolSpec, ...]:
+def tools_for(
+    allow_proposal: bool, allow_memory: bool = False, allow_search: bool = False, allow_menu: bool = False,
+) -> tuple[ToolSpec, ...]:
     """The tools offered to the model; staging, memory and search tools only
     when Go allows them."""
     return (
         *QUERY_TOOLS,
+        *((GET_MENU,) if allow_menu else ()),
         *((WEB_SEARCH,) if allow_search else ()),
         *(STAGING_TOOLS if allow_proposal else ()),
         *(MEMORY_TOOLS if allow_memory else ()),
-        SUBMIT_REPLY,
+        ToolSpec(SUBMIT_REPLY.name, SUBMIT_REPLY.description, MenuSubmitReply) if allow_menu else SUBMIT_REPLY,
     )
 
 
-class DataSource(Protocol):
+class DataSource(MenuSource, Protocol):
     async def fetch(self, kind: str, start: date, end: date) -> list[dict]:
         """kind is "meals" or "events"."""
         ...
@@ -172,6 +176,13 @@ class GoClient:
     def __init__(self, http: httpx.AsyncClient, token: str):
         self.http = http
         self.token = token
+
+    async def fetch_menu(self, params: dict[str, str]) -> dict:
+        resp = await self.http.get(
+            "/internal/agent/menu", params=params, headers={"Authorization": f"Bearer {self.token}"},
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def fetch(self, kind: str, start: date, end: date) -> list[dict]:
         resp = await self.http.get(

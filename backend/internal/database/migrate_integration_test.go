@@ -33,3 +33,25 @@ func TestIntegrationTierMigrationKeepsExistingUsers(t *testing.T) {
 		t.Fatalf("existing user's tier: %q", tier)
 	}
 }
+
+func TestIntegrationCampusMigrationBackfillsAccountWithoutProfile(t *testing.T) {
+	db := testdb.New(t)
+	m, err := database.NewMigratorURL(db.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.Migrate(9); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL.Exec("INSERT INTO users (username,password_hash) VALUES ('early','x')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Migrate(10); err != nil {
+		t.Fatal(err)
+	}
+	var campus string
+	if err := db.SQL.QueryRow("SELECT campus FROM users WHERE username='early'").Scan(&campus); err != nil || campus != "yoshida" {
+		t.Fatalf("campus = %q, error %v", campus, err)
+	}
+}

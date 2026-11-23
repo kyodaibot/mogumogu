@@ -19,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import ValidationError
 
+from .cafeteria import GET_MENU, MenuQueries
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
 from .schemas import ReplyRequest, SubmitReply
@@ -44,7 +45,7 @@ _QUERY_NAMES = {t.name for t in QUERY_TOOLS}
 _STAGING_NAMES = {t.name for t in STAGING_TOOLS}
 _MEMORY_NAMES = {t.name for t in MEMORY_TOOLS}
 # Run in parallel, like the query tools.
-_FETCH_NAMES = _QUERY_NAMES | {WEB_SEARCH.name}
+_FETCH_NAMES = _QUERY_NAMES | {WEB_SEARCH.name, GET_MENU.name}
 
 
 class State(TypedDict):
@@ -143,17 +144,17 @@ SYSTEM = SystemMessage([{"type": "text", "text": SYSTEM_PROMPT}, {"cachePoint": 
 def build_graph(
     model: ChatModel, source: DataSource, allergens: list[str], time: TimeBudget, counts: Counts,
     staging: Staging | None = None, memories: MemoryChanges | None = None,
-    search: SearchProvider | None = None, searches: SearchBudget | None = None,
+    search: SearchProvider | None = None, searches: SearchBudget | None = None, menus: MenuQueries | None = None,
 ):
     """staging is None when Go does not allow proposals, memories when it
     does not allow memories, search when searching is not allowed or not set
     up; their tools are then not offered."""
     budget = QueryBudget()
     searches = searches or SearchBudget()
-    tools_offered = tools_for(staging is not None, memories is not None, search is not None)
+    tools_offered = tools_for(staging is not None, memories is not None, search is not None, menus is not None)
     runnable = (
         _QUERY_NAMES | (_STAGING_NAMES if staging else set()) | (_MEMORY_NAMES if memories else set())
-        | ({WEB_SEARCH.name} if search else set())
+        | ({WEB_SEARCH.name} if search else set()) | ({GET_MENU.name} if menus else set())
     )
     # What memorize answered each memory call; validate repeats it.
     memory_answers: dict[str, str] = {}
@@ -211,6 +212,8 @@ def build_graph(
             return _TIME_UP
         try:
             async with asyncio.timeout(timeout):
+                if call["name"] == GET_MENU.name:
+                    return await menus.fetch(source, call["args"])
                 return await run_query(source, call["name"], call["args"], budget, seen_meals)
         except TimeoutError:
             counts.go_timeouts += 1
@@ -236,10 +239,15 @@ def build_graph(
 
     async def tools(state: State):
         calls = state["messages"][-1].tool_calls
-        fetches = [c for c in calls if c["name"] in _FETCH_NAMES]
+        # Go binds only the most recent menu query to the request. In a tool
+        # batch issue a single lookup so a slower response cannot replace it.
+        menu_calls = [c for c in calls if c["name"] == GET_MENU.name]
+        fetches = [c for c in calls if c["name"] in _FETCH_NAMES and c not in menu_calls[1:]]
         if any(c["name"] == WEB_SEARCH.name for c in fetches):
             searches.rounds += 1
         answers = dict(zip((c["id"] for c in fetches), await asyncio.gather(*(fetch(c) for c in fetches))))
+        answers.update({c["id"]: "Use one campus/time query at a time; this query was not run."
+                        for c in menu_calls[1:]})
         # After the queries, which may show the ids of the records to change.
         for c in calls:
             if c["name"] in _STAGING_NAMES:
@@ -300,6 +308,11 @@ def build_graph(
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
         checked = check_reply(submit["args"], allergens, searches.found) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
+            if menus:
+                checked = menus.check(checked) or checked
+            elif checked.menu_selections:
+                checked = "The cafeteria menu is unavailable for this request."
+        if isinstance(checked, SubmitReply):
             return {"result": checked.rounded(), "finish": finish}
         if state["retried"]:
             return {"error": "invalid_output", "finish": finish}
@@ -354,7 +367,8 @@ async def run_agent(
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
     searches = SearchBudget()
     search = search if req.context.allow_search else None
-    graph = build_graph(model, source, allergens, time, counts, staging, memories, search, searches)
+    menus = MenuQueries(req.context.target_date) if req.context.campus else None
+    graph = build_graph(model, source, allergens, time, counts, staging, memories, search, searches, menus)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "out_of_time": False,

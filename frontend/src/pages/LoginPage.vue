@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { CAMPUSES, type Campus } from '../api'
 import { session } from '../session'
 import { errorMessage, fieldMessages } from '../lib/messages'
 import { MEAL_TYPES } from '../lib/meals'
@@ -10,7 +11,7 @@ const route = useRoute()
 const router = useRouter()
 
 const mode = ref<'login' | 'register'>('login')
-const form = reactive({ username: '', password: '' })
+const form = reactive({ username: '', password: '', campus: null as Campus | null })
 const submitting = ref(false)
 const error = ref('')
 const fields = ref<Record<string, string>>({})
@@ -31,7 +32,7 @@ async function submit() {
     if (mode.value === 'login') {
       await session.login(form.username, form.password)
     } else {
-      await session.register(form.username, form.password)
+      await session.register(form.username, form.password, form.campus)
     }
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     await router.push(session.state.hasProfile ? redirect : '/profile')
@@ -79,6 +80,15 @@ async function submit() {
           />
           <small v-if="mode === 'register' && !fields.password" class="hint">{{ t.login.passwordHint }}</small>
           <small v-if="fields.password" class="field-error">{{ fields.password }}</small>
+        </label>
+
+        <label v-if="mode === 'register'">
+          {{ t.campus.label }}
+          <select v-model="form.campus" name="campus" required>
+            <option disabled :value="null">{{ t.campus.choose }}</option>
+            <option v-for="c in CAMPUSES" :key="c" :value="c">{{ t.campus[c] }}</option>
+          </select>
+          <small v-if="fields.campus" class="field-error">{{ fields.campus }}</small>
         </label>
 
         <p v-if="error" class="banner error" role="alert">{{ error }}</p>

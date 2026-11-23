@@ -71,6 +71,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	st := store.New(gormDB)
+	menuRequests := &httpserver.MenuRequests{}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -92,7 +93,7 @@ func run(logger *slog.Logger) error {
 			TrustedProxies:   cfg.TrustedProxies,
 
 			Assistant:   assistant.NewClient(cfg.Assistant.ServiceURL),
-			AgentTokens: agentTokens,
+			AgentTokens: agentTokens, MenuRequests: menuRequests,
 			AssistantLimits: httpserver.DailyLimits{
 				Normal: cfg.Assistant.NormalLimit, Pro: cfg.Assistant.ProLimit, Site: cfg.Assistant.SiteLimit,
 			},
@@ -102,7 +103,7 @@ func run(logger *slog.Logger) error {
 	internalSrv := &http.Server{
 		Addr: net.JoinHostPort("", strconv.Itoa(cfg.InternalPort)),
 		Handler: httpserver.NewInternalRouter(httpserver.InternalDeps{
-			Logger: logger, Store: st, AgentTokens: agentTokens,
+			Logger: logger, Store: st, AgentTokens: agentTokens, MenuRequests: menuRequests,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

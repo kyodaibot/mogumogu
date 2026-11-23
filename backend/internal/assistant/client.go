@@ -28,6 +28,7 @@ type Range struct {
 // Profile, Events and Meals hold the same JSON objects as the public API.
 type Context struct {
 	TargetDate string `json:"target_date"`
+	Campus     string `json:"campus,omitempty"`
 	Now        string `json:"now"`
 	Timezone   string `json:"timezone"`
 	Locale     string `json:"locale"` // the reply's language: "ja" or "en"
@@ -110,7 +111,20 @@ type Recommendation struct {
 	Estimate    Estimate `json:"estimate"`
 }
 
+type MenuSelection struct {
+	Reason   string        `json:"reason"`
+	Items    []MenuPortion `json:"items"`
+	StoreIDs []string      `json:"store_ids"`
+}
+
+type MenuPortion struct {
+	ID       string `json:"id"`
+	Portions int    `json:"portions"`
+}
+
 type Reply struct {
+	MenuQueryID     string           `json:"menu_query_id,omitempty"`
+	MenuSelections  []MenuSelection  `json:"menu_selections,omitempty"`
 	Reply           string           `json:"reply"`
 	Recommendations []Recommendation `json:"recommendations"`
 	AskMealType     bool             `json:"ask_meal_type"`

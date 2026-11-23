@@ -75,3 +75,19 @@ func TestReplyContractIsRead(t *testing.T) {
 		t.Errorf("memory changes: %v", ops)
 	}
 }
+
+func TestCafeteriaReplyContract(t *testing.T) {
+	b, err := os.ReadFile(contracttest.Path("cafeteria-reply.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	var r Reply
+	if err = d.Decode(&r); err != nil {
+		t.Fatal(err)
+	}
+	if r.MenuQueryID == "" || len(r.MenuSelections) != 1 || len(r.MenuSelections[0].Items) != 2 || len(r.MenuSelections[0].StoreIDs) != 1 || r.MealType == nil || *r.MealType != "breakfast" {
+		t.Fatalf("invalid breakfast: %+v", r)
+	}
+}

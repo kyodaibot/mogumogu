@@ -7,6 +7,7 @@ import { createConversation } from '../lib/conversation'
 import { formatDayTitle, type Ymd } from '../lib/date'
 import { session } from '../session'
 import { t } from '../i18n'
+import CafeteriaCard from './CafeteriaCard.vue'
 import MealForm from './MealForm.vue'
 import MealTray from './MealTray.vue'
 import ProposalCard from './ProposalCard.vue'
@@ -235,6 +236,11 @@ watch(
               >
                 {{ turn.added?.includes(i) ? t.assistant.added : t.assistant.addToLog }}
               </button>
+            </li>
+          </ul>
+          <ul v-if="turn.reply.cafeteria_cards?.length" class="recs">
+            <li v-for="(card, i) in turn.reply.cafeteria_cards" :key="i" class="rec">
+              <CafeteriaCard :card="card" :date="turn.date" :added="!!turn.added?.includes(i)" @saved="mealAdded(turn, i)" />
             </li>
           </ul>
           <ProposalCard

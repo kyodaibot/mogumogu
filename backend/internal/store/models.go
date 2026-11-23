@@ -18,6 +18,7 @@ type User struct {
 	ID           int64
 	Username     string
 	PasswordHash string
+	Campus       string
 	Tier         Tier
 	CreatedAt    time.Time
 }
@@ -42,7 +43,8 @@ func ParseTier(s string) (Tier, bool) {
 func (User) TableName() string { return "users" }
 
 type Profile struct {
-	UserID           int64 `gorm:"primaryKey;autoIncrement:false"`
+	Campus           string `gorm:"->"` // Read from the owning account.
+	UserID           int64  `gorm:"primaryKey;autoIncrement:false"`
 	HeightCM         float64
 	WeightKG         float64
 	Age              int
