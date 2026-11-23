@@ -101,6 +101,25 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # Cafeteria menu importer: Digdag runs importer/menus.dig, which starts
+  # jobs.py once a minute from 08:00 to 23:59 JST (docs/operations.md 6.14).
+  # It reads the public co-op site and connects as menu_importer, a role that
+  # can only write the menu tables. No port: nothing calls it.
+  importer:
+    logging: *logging
+    image: ${REGISTRY}/mogumogu/importer:${TAG}
+    environment:
+      # The password is hex (openssl rand -hex), so it needs no URL escaping.
+      MENU_DATABASE_URL: postgres://menu_importer:${MENU_DB_PASSWORD}@${DB_HOST}:5432/mogumogu?sslmode=require
+    # Digdag's heap is capped in importer/Dockerfile; about 220 MB in use
+    # while it imports (measured locally on 2026-11-23). On a 1 GB instance
+    # this limit protects the backend and AI service.
+    mem_limit: 384m
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   web:
     logging: *logging
     image: ${REGISTRY}/mogumogu/web:${TAG}

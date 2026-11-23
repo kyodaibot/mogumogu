@@ -194,7 +194,7 @@ app-logs: check-env
 # refused: the image would not match the commit it is named after.
 AWS_REGION := ap-northeast-1
 # Service name -> Dockerfile. backend also provides migrate.
-IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile
+IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile importer:importer/Dockerfile
 
 push:
 	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make push"; exit 1; }
@@ -225,7 +225,7 @@ deploy:
 	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make deploy"; exit 1; }
 	@set -eo pipefail; export AWS_REGION=$(AWS_REGION); tag=$(TAG); \
 	[[ $$tag =~ ^[0-9a-f]{7,40}$$ ]] || { echo "TAG must be a commit ID, got: $$tag"; exit 1; }; \
-	for svc in backend web ai; do \
+	for svc in backend web ai importer; do \
 		aws ecr describe-images --repository-name mogumogu/$$svc --image-ids imageTag=$$tag >/dev/null 2>&1 || \
 			{ echo "mogumogu/$$svc:$$tag is not in ECR; run make push on that commit first"; exit 1; }; \
 	done; \

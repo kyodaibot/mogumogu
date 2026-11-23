@@ -129,6 +129,7 @@ jobs:
       - run: docker build -f backend/Dockerfile -t mogumogu-backend:ci .
       - run: docker build -f frontend/Dockerfile -t mogumogu-web:ci .
       - run: docker build -f ai/Dockerfile -t mogumogu-ai:ci .
+      - run: docker build -f importer/Dockerfile -t mogumogu-importer:ci .
 
   # Release: the same steps as `make push` and `make deploy` on a laptop, with
   # temporary credentials for the mogumogu-deploy role (infra/main/github.tf)

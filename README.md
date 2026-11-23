@@ -248,7 +248,7 @@ make test-e2e           # browser end-to-end test, see below
 
 ### CI/CD
 
-On every push to `dev` or `master` and every PR into them, GitHub Actions runs 5 jobs: a secret scan of the full history, backend tests (with PostgreSQL, so the integration tests really run), frontend build and tests, AI service tests (fake model, no AWS credentials) and builds of the three images. A push to `master` that passes all five is then deployed by a sixth job, with temporary AWS credentials from OIDC. The configuration is in `.github/workflows/ci.yml`; see [docs/operations.md](docs/operations.md#4-cigithub-actions).
+On every push to `dev` or `master` and every PR into them, GitHub Actions runs 5 jobs: a secret scan of the full history, backend tests (with PostgreSQL, so the integration tests really run), frontend build and tests, AI service tests (fake model, no AWS credentials) and builds of the four images (backend, web, AI service, menu importer). A push to `master` that passes all five is then deployed by a sixth job, with temporary AWS credentials from OIDC. The configuration is in `.github/workflows/ci.yml`; see [docs/operations.md](docs/operations.md#4-cigithub-actions).
 
 Workflow: branch from `dev` → merge back into `dev` → open a PR from `dev` to `master` → merge once every check passes; that merge is the release.
 
