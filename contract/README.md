@@ -7,6 +7,7 @@
 | `limits.json` | 长度、条数、天数、餐次、营养数值上限、AI 服务的硬上限 | 手写 | Go `internal/httpserver/contract_test.go`、`internal/assistant/client_test.go`；pytest `tests/test_contract.py`；Vitest `src/lib/contract.test.ts` |
 | `request.json` | Go 为一条消息发给 AI 服务的请求 | Go 测试生成（`-update`） | Go 逐字比较；pytest 用 `ReplyRequest` 读取 |
 | `reply.json` | AI 服务的回复，含各种变更提案和记忆变更、来源 | 手写，变更部分必须等于工具实际暂存的结果 | pytest 用 `Staging` / `MemoryChanges` 生成后比较；Go 用 `DisallowUnknownFields` 解码 |
+| `cafeteria-reply.json` | 饮食助手选择的中央食堂早餐款式、份数及菜单查询引用 | 手写 | Python 和 Go 的食堂菜单测试 |
 
 ## 修改限制
 1. 改 `limits.json`。

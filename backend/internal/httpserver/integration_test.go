@@ -139,7 +139,7 @@ func signUp(t *testing.T, srv *httptest.Server, username string) *browser {
 	t.Helper()
 	b := newBrowser(t, srv)
 	b.expect(200, "GET", "/api/auth/csrf", nil)
-	b.expect(201, "POST", "/api/auth/register", map[string]string{"username": username, "password": "correct horse battery"})
+	b.expect(201, "POST", "/api/auth/register", map[string]string{"username": username, "password": "correct horse battery", "campus": "yoshida"})
 	return b
 }
 
@@ -173,8 +173,9 @@ func TestIntegrationAuthFlow(t *testing.T) {
 		HasProfile bool     `json:"has_profile"`
 		CSRFToken  string   `json:"csrf_token"`
 	}
-	b.expect(201, "POST", "/api/auth/register", map[string]string{"username": "Taro_01", "password": "correct horse battery"}).json(t, &reg)
-	if reg.User.Username != "taro_01" || reg.HasProfile || !strings.HasPrefix(reg.CSRFToken, "v1.s.") || reg.CSRFToken == anonToken {
+	b.expect(422, "POST", "/api/auth/register", map[string]string{"username": "Taro_01", "password": "correct horse battery"})
+	b.expect(201, "POST", "/api/auth/register", map[string]string{"username": "Taro_01", "password": "correct horse battery", "campus": "uji"}).json(t, &reg)
+	if reg.User.Campus != "uji" || reg.User.Username != "taro_01" || reg.HasProfile || !strings.HasPrefix(reg.CSRFToken, "v1.s.") || reg.CSRFToken == anonToken {
 		t.Fatalf("register response: %+v", reg)
 	}
 	if b.csrfCookie() != reg.CSRFToken {
@@ -204,7 +205,7 @@ func TestIntegrationAuthFlow(t *testing.T) {
 	// Duplicate username, case-insensitively.
 	other := newBrowser(t, srv)
 	other.expect(200, "GET", "/api/auth/csrf", nil)
-	if r := other.do("POST", "/api/auth/register", map[string]string{"username": "TARO_01", "password": "another password"}); r.status != 409 || r.errCode(t) != "username_taken" {
+	if r := other.do("POST", "/api/auth/register", map[string]string{"username": "TARO_01", "password": "another password", "campus": "uji"}); r.status != 409 || r.errCode(t) != "username_taken" {
 		t.Fatalf("duplicate register: %d %s", r.status, r.body)
 	}
 
@@ -303,9 +304,18 @@ func TestIntegrationProfile(t *testing.T) {
 	if r := b.do("GET", "/api/profile", nil); r.status != 404 || r.errCode(t) != "profile_not_found" {
 		t.Fatalf("missing profile: %d %s", r.status, r.body)
 	}
+	// The campus can change before a profile exists.
+	var changed meJSON
+	b.expect(200, "PUT", "/api/auth/me/campus", map[string]string{"campus": "uji"}).json(t, &changed)
+	if changed.User.Campus != "uji" || changed.User.Username != "profile_user" {
+		t.Fatalf("campus change: %+v", changed.User)
+	}
+	if r := b.do("PUT", "/api/auth/me/campus", map[string]string{"campus": "osaka"}); r.status != 422 || r.errCode(t) != "validation_failed" {
+		t.Fatalf("invalid campus: %d %s", r.status, r.body)
+	}
 
 	put := func(allergens any) map[string]any {
-		body := map[string]any{"height_cm": 172.5, "weight_kg": 65, "age": 21, "has_exercise_habit": true, "goal": "build_muscle"}
+		body := map[string]any{"campus": "katsura", "height_cm": 172.5, "weight_kg": 65, "age": 21, "has_exercise_habit": true, "goal": "build_muscle"}
 		if allergens != "omit" {
 			body["allergens"] = allergens
 		}
@@ -334,7 +344,7 @@ func TestIntegrationProfile(t *testing.T) {
 
 	var me meJSON
 	b.expect(200, "GET", "/api/auth/me", nil).json(t, &me)
-	if !me.HasProfile {
+	if !me.HasProfile || me.User.Campus != "katsura" {
 		t.Fatal("has_profile still false")
 	}
 

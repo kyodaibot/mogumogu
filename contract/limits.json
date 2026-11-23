@@ -4,7 +4,7 @@
   "dish_name_chars": 80,
   "dish_description_chars": 200,
   "meal_content_chars": 200,
-  "recommendation_counts": [0, 3],
+  "recommendation_counts": [0, 1, 2, 3],
   "history_turns": 9,
   "changes_per_reply": 10,
   "memories": 30,

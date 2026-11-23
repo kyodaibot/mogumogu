@@ -94,8 +94,8 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 		}
 		turn.Message = v.text(field("message"), t.Message, 1, maxMessageChars)
 		turn.Reply = v.text(field("reply"), t.Reply, 1, maxReplyChars)
-		// A reply has no recommendations or exactly three.
-		if n := len(t.Recommendations); n != 0 && n != 3 {
+		// Menu recommendations can have one to three available options.
+		if len(t.Recommendations) > 3 {
 			v.add(field("recommendations"), "invalid_value")
 		}
 		for j, r := range t.Recommendations {
@@ -132,6 +132,7 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 
 // assistantReplyJSON is the answer to a message (docs/api.md 9.1).
 type assistantReplyJSON struct {
+	CafeteriaCards  []cafeteriaCard            `json:"cafeteria_cards,omitempty"`
 	Reply           string                     `json:"reply"`
 	Recommendations []assistant.Recommendation `json:"recommendations"`
 	AskMealType     bool                       `json:"ask_meal_type"`
@@ -272,37 +273,42 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 	// Only once the message is answered, so a refunded message saves nothing.
 	updates := a.saveMemories(ctx, user, reply.MemoryChanges, memories)
 	c.JSON(http.StatusOK, assistantReplyJSON{
-		Reply: reply.Reply, Recommendations: reply.Recommendations,
+		Reply: reply.Reply.Reply, Recommendations: reply.Recommendations, CafeteriaCards: reply.cards,
 		AskMealType: reply.AskMealType, MealType: reply.MealType, Proposal: proposal,
 		MemoryUpdates: updates, Sources: a.checkSources(user, reply.Sources),
 	})
 }
 
+type assistantAnswer struct {
+	assistant.Reply
+	cards []cafeteriaCard
+}
+
 // askAssistant assembles the initial context (project-review 3.6) and calls
 // the AI service. It also returns the memories in that context, which the
 // memory changes in the reply are checked against.
-func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistant.Reply, []store.Memory, error) {
+func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date, message, locale string, history []assistant.Turn, now time.Time) (assistantAnswer, []store.Memory, error) {
 	userID := user.ID
-	d := contextData{Target: target, Now: now, Locale: locale, Pro: user.Tier == store.TierPro}
+	d := contextData{Target: target, Now: now, Locale: locale, Campus: user.Campus, Pro: user.Tier == store.TierPro}
 	p, err := a.store.GetProfile(ctx, userID)
 	switch {
 	case err == nil:
 		d.Profile = &p
 	case !errors.Is(err, store.ErrNotFound):
-		return assistant.Reply{}, nil, err
+		return assistantAnswer{}, nil, err
 	}
 
 	// A downgraded user keeps their memories, but they are not used.
 	if d.Pro {
 		if d.Memories, err = a.store.ListMemories(ctx, userID); err != nil {
-			return assistant.Reply{}, nil, err
+			return assistantAnswer{}, nil, err
 		}
 	}
 
 	d.EventsFrom, d.EventsTo = target.AddDays(-1), target.AddDays(1)
 	start, end := tz.RangeBounds(d.EventsFrom, d.EventsTo)
 	if d.Events, err = a.store.ListEvents(ctx, userID, start, end); err != nil {
-		return assistant.Reply{}, nil, err
+		return assistantAnswer{}, nil, err
 	}
 
 	// Future records are plans, not meals eaten: the window ends today at the latest.
@@ -312,25 +318,33 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 	}
 	d.MealsFrom = d.MealsTo.AddDays(-(mealWindowDays - 1))
 	if d.Meals, err = a.store.ListMeals(ctx, userID, d.MealsFrom.Time(), d.MealsTo.Time()); err != nil {
-		return assistant.Reply{}, nil, err
+		return assistantAnswer{}, nil, err
 	}
 
+	token := a.agentTokens.Issue(userID)
+	menu := &menuRequest{target: target, now: now, campus: user.Campus}
+	a.menuRequests.active.Store(token, menu)
+	defer a.menuRequests.active.Delete(token)
 	reply, err := a.assistant.Reply(ctx, assistant.Request{
 		Message: message,
 		History: history,
-		Token:   a.agentTokens.Issue(userID),
+		Token:   token,
 		UserID:  userID,
 		Tier:    string(user.Tier),
 		Context: assistantContext(d),
 	})
-	return reply, d.Memories, err
+	if err != nil {
+		return assistantAnswer{}, nil, err
+	}
+	cards, err := menu.render(reply)
+	return assistantAnswer{Reply: reply, cards: cards}, d.Memories, err
 }
 
 // contextData is what askAssistant reads for one message.
 type contextData struct {
 	Target               tz.Date
 	Now                  time.Time
-	Locale               string
+	Locale, Campus       string
 	Pro                  bool
 	Profile              *store.Profile // nil before the user saves one
 	Memories             []store.Memory
@@ -360,10 +374,10 @@ func assistantContext(d contextData) assistant.Context {
 		mealItems = append(mealItems, toMealJSON(m))
 	}
 	return assistant.Context{
-		TargetDate: d.Target.String(),
-		Now:        tz.FormatInstant(d.Now),
-		Timezone:   tz.Tokyo.String(),
-		Locale:     d.Locale,
+		TargetDate: d.Target.String(), Campus: d.Campus,
+		Now:      tz.FormatInstant(d.Now),
+		Timezone: tz.Tokyo.String(),
+		Locale:   d.Locale,
 		// Checked again when the reply comes back and when the proposal runs.
 		AllowProposal: d.Pro,
 		// Checked again when the reply comes back.

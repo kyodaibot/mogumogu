@@ -75,7 +75,7 @@ def test_demo_model_follows_up_on_the_history(client):
 def test_rejects_bad_history(client):
     c = client(demo_model())
     ok = turn("q", "a")
-    for history in ([ok] * 10, [turn("q", "a", "x", "y")], [{**ok, "reply": "長" * 1001}]):
+    for history in ([ok] * 10, [turn("q", "a", "w", "x", "y", "z")], [{**ok, "reply": "長" * 1001}]):
         resp = c.post("/internal/reply", json={**body(), "history": history})
         assert resp.status_code == 422, history
 

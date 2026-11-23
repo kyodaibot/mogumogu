@@ -13,6 +13,7 @@ import (
 )
 
 type profileInput struct {
+	Campus           *string   `json:"campus"`
 	HeightCM         *float64  `json:"height_cm"`
 	WeightKG         *float64  `json:"weight_kg"`
 	Age              *int      `json:"age"`
@@ -22,6 +23,7 @@ type profileInput struct {
 }
 
 type profileJSON struct {
+	Campus           string    `json:"campus"`
 	HeightCM         float64   `json:"height_cm"`
 	WeightKG         float64   `json:"weight_kg"`
 	Age              int       `json:"age"`
@@ -32,7 +34,7 @@ type profileJSON struct {
 }
 
 func toProfileJSON(p store.Profile) profileJSON {
-	out := profileJSON{
+	out := profileJSON{Campus: p.Campus,
 		HeightCM: p.HeightCM, WeightKG: p.WeightKG, Age: p.Age,
 		HasExerciseHabit: p.HasExerciseHabit, Goal: p.Goal,
 		UpdatedAt: tz.FormatInstant(p.UpdatedAt),
@@ -67,6 +69,9 @@ func (a *api) putProfile(c *gin.Context) {
 
 	var v validator
 	p := store.Profile{UserID: sess.UserID}
+	if in.Campus != nil {
+		p.Campus = validateCampus(&v, in.Campus)
+	}
 	if h := v.decimal("height_cm", in.HeightCM, 50, 300, true); h != nil {
 		p.HeightCM = *h
 	}

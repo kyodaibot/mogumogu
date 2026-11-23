@@ -124,7 +124,7 @@ export async function seedAccount({ baseUrl, username, password, profile, events
   const login = await api('POST', '/api/auth/login', { username, password })
   let registered = false
   if (login.status === 401) {
-    await must('POST', '/api/auth/register', { username, password }, [201])
+    await must('POST', '/api/auth/register', { username, password, campus: 'yoshida' }, [201])
     registered = true
   } else if (login.status !== 200) {
     throw new Error(`login ${username} -> ${login.status} ${JSON.stringify(login.data?.error)}`)

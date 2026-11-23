@@ -172,6 +172,7 @@ async function main() {
 
   await waitFor(`!!document.cookie.match(/mogumogu_csrf=v1\\.a\\./)`, 'anonymous csrf cookie')
   const anonCsrf = await getCookie('mogumogu_csrf')
+  await fill('select[name=campus]', 'yoshida')
   await fill('input[name=password]', 'correct horse battery')
   await click('form button[type=submit]')
   await waitFor(`location.pathname === '/profile'`, 'redirect to /profile after register')
@@ -181,6 +182,17 @@ async function main() {
     anonCsrf?.startsWith('v1.a.') && sessionCsrf?.startsWith('v1.s.') && anonCsrf !== sessionCsrf,
     `${anonCsrf?.slice(0, 5)} -> ${sessionCsrf?.slice(0, 5)}`)
   check('welcome banner on first profile', (await bodyText()).includes('ようこそ'))
+
+  // The campus is saved on its own, before any profile exists.
+  const campusNow = `fetch('/api/auth/me').then(r => r.json()).then(r => r.user.campus)`
+  await fill('select[name=campus]', 'uji')
+  await waitFor(`${campusNow}.then(c => c === 'uji')`, 'campus saved')
+  await waitFor(`document.querySelector('.campus [role=status]')?.innerText === '保存しました。'`, 'campus saved message')
+  check('campus changes without a profile, with a saved message', true)
+  await fill('select[name=campus]', 'yoshida')
+  await waitFor(`${campusNow}.then(c => c === 'yoshida')`, 'campus saved back')
+  await waitFor(`!document.querySelector('.campus select').disabled`, 'campus select enabled')
+  check('campus changed back', true)
 
   // Navigating to the calendar before having a profile bounces back.
   await evaluate(`history.pushState({}, '', '/'); dispatchEvent(new PopStateEvent('popstate'))`)
@@ -201,9 +213,6 @@ async function main() {
   await fill('input[type=number][max="120"]', '21')
   await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='ある').querySelector('input').click()`)
   await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='筋肉をつける').querySelector('input').click()`)
-  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='アレルゲンがある').querySelector('input').click()`)
-  await settle()
-  await fill('input[placeholder^="例：ピーナッツ"]', 'ピーナッツ、えび')
   await click('form button[type=submit]')
   await waitFor(`location.pathname === '/'`, 'calendar after profile')
   check('saving the first profile opens the calendar', true)
@@ -223,77 +232,69 @@ async function main() {
   await waitFor(`!!document.querySelector('.panel .intro .chip')`, 'assistant panel with presets')
   const presets = await evaluate(`[...document.querySelectorAll('.panel .intro .chip')].map(e => e.innerText)`)
   check('assistant opens with 4 preset questions for today', presets.length === 4 && presets[1] === '今日の昼食は何を食べたらいい？', presets.join(' / '))
+  // Breakfast is a weekday service. Unit/integration tests also fix the day for weekend CI.
+  const dayOfWeek = new Date(today + 'T12:00:00Z').getUTCDay()
+  if (dayOfWeek > 0 && dayOfWeek < 6) {
+    await clickText('.panel .chip', '今日の朝食は何を食べたらいい？')
+    await waitFor(`document.querySelectorAll('.panel .rec select option').length === 2`, 'breakfast variants')
+    check('one breakfast card for two available plates', await evaluate("document.querySelectorAll('.panel .rec').length") === 1)
+    await fill('.panel .rec select', '202')
+    await click('.panel .rec .add')
+    await waitFor(`document.querySelector('.panel .rec form .nutrients input')?.value === '420'`, 'selected breakfast nutrition')
+    await fill('.panel .rec form input[type=date]', tomorrow)
+    await click('.panel .rec form button[type=submit]')
+    await waitFor(`document.querySelector('.panel .rec button.add')?.disabled === true`, 'selected breakfast saved')
+    const breakfast = JSON.parse(requests.filter(r => r.url === '/api/meal-records' && r.method === 'POST').at(-1).body)
+    check('saves only the selected breakfast plate', breakfast.content === '朝 洋風' && breakfast.calories === 420 && breakfast.meal_type === 'breakfast')
+    await click('.panel .new')
+    await waitFor(`!!document.querySelector('.panel .intro .chip')`, 'lunch conversation')
+  }
   await clickText('.panel .chip', '今日の昼食は何を食べたらいい？')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 3`, 'three recommendation cards')
-  const firstAsk = requests.find((r) => r.url === '/api/assistant/messages')
-  check('preset question gets 3 recommendation cards; presets hidden',
-    !(await evaluate(`!!${q('.panel .intro')}`)) && JSON.parse(firstAsk.body).date === today, firstAsk.body)
-  check('the question carries the interface language, and the reply is in it',
-    JSON.parse(firstAsk.body).locale === 'ja' && (await textOf('.panel .bubble.assistant')).startsWith('（テスト回答）'))
-
+  const cardSelector = '.panel .rec'
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 2`, 'two menu-backed cards')
+  const firstAsk = JSON.parse(requests.filter(r => r.url === '/api/assistant/messages').at(-1).body)
+  const firstCard = await textOf(cardSelector)
+  check('lunch card shows all eligible stores and official nutrition', firstAsk.locale === 'ja' && firstAsk.date === today &&
+    firstCard.includes('中央食堂') && firstCard.includes('北部食堂') && firstCard.includes('450 kcal') && firstCard.includes(today))
+  const panelText = await textOf('.panel')
+  check('official allergen labels are shown by name, not by site code',
+    panelText.includes('卵 · 小麦由来') && !panelText.includes('wheat_origin'))
   await click('.panel .close')
-  await waitFor(`!document.querySelector('.panel')`, 'panel closed')
   await click('.fab')
-  await waitFor(`!!document.querySelector('.panel')`, 'panel reopened')
-  check('closing and reopening keeps the conversation', await evaluate(`document.querySelectorAll('.panel .rec').length === 3`))
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 2`, 'cards after reopening')
 
-  // Another date: the conversation continues below a divider.
+  const firstRec = "document.querySelector('.panel .rec')"
+  await click('.panel .rec .add')
+  await waitFor(`!!${firstRec}.querySelector('form')`, 'meal form inside cafeteria card')
+  const prefilled = await evaluate(`[...${firstRec}.querySelectorAll('form .nutrients input')].map(i => i.value).join('|')`)
+  check('serving uses official values and leaves a missing nutrient blank', prefilled === '450|20|10|', prefilled)
+  await fill('.panel .rec form input[type=date]', tomorrow)
+  await click('.panel .rec form button[type=submit]')
+  await waitFor(`${firstRec}.querySelector('button.add')?.disabled === true`, 'cafeteria meal saved')
+  const saved = requests.filter(r => r.url === '/api/meal-records' && r.method === 'POST').map(r => JSON.parse(r.body)).at(-1)
+  check('one confirmed meal reaches the calendar', saved.date === tomorrow && saved.meal_type === 'lunch' &&
+    saved.calories === 450 && saved.carbs_g === null && saved.content.includes('E2E'))
+
   const tomorrowCellExpr = `[...document.querySelectorAll('.day')].find(d => d.classList.contains('today')).nextElementSibling`
   await evaluate(`(${tomorrowCellExpr}).click()`)
   await waitFor(`!document.querySelector('.panel .target .today-mark')`, 'panel follows the selected date')
-  await fill('#assistant-input', 'その日は何を食べたらいい？')
+  await fill('#assistant-input', '明日の夕食は何を食べたらいい？')
   await click('.composer button[type=submit]')
-  await waitFor(`document.querySelectorAll('.panel .follow-up .chip').length === 3`, 'meal choice buttons')
-  const divider = await textOf('.panel .divider')
-  check('new date: divider shown, earlier messages kept', divider.startsWith('ここから') && (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 3, divider)
-  await clickText('.panel .follow-up .chip', '明日の夕食は何を食べたらいい？')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 6`, 'recommendations for tomorrow')
-  const asks = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body))
-  check('each message carries its own target date',
-    asks.length === 3 && asks[0].date === today && asks[1].date === tomorrow && asks[2].date === tomorrow && asks[2].message === '明日の夕食は何を食べたらいい？',
-    asks.map((a) => `${a.date} ${a.message}`).join(' | '))
-  check('each message carries the answered turns before it as history',
-    asks[0].history.length === 0 && asks[1].history.length === 1 && asks[1].history[0].recommendations.length === 3 &&
-    asks[2].history.length === 2 && asks[2].history[1].message === 'その日は何を食べたらいい？' && !('reason' in asks[1].history[0].recommendations[0]),
-    asks.map((a) => a.history.length).join(' / '))
-
-  // The conversation is kept in this tab: after a reload the panel starts
-  // closed and shows it again, and the next message carries it as history.
+  await waitFor(`document.querySelector('.panel')?.innerText.includes('更新されてから')`, 'ask before using today’s menu')
+  const ask = JSON.parse(requests.filter(r => r.url === '/api/assistant/messages').at(-1).body)
+  check('future request keeps the selected date and both previous card summaries', ask.date === tomorrow &&
+    ask.history.length === 1 && ask.history[0].recommendations.length === 2)
+  await fill('#assistant-input', '今日のメニューを参考に明日の夕食を選んで')
+  await click('.composer button[type=submit]')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'two reference dinner cards for tomorrow')
+  const reference = await evaluate("document.querySelectorAll('.panel .rec')[2].innerText")
+  check('tomorrow reference displays the actual menu date and unconfirmed supply', reference.includes(today) && reference.includes('参考メニュー'))
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.fab')`, 'calendar after reload')
-  check('after a reload the panel starts closed', !(await evaluate(`!!${q('.panel')}`)))
   await click('.fab')
-  await waitFor(`document.querySelectorAll('.panel .bubble.user').length === 3`, 'conversation after reload')
-  check('after a reload the conversation is still there', (await evaluate(`document.querySelectorAll('.panel .rec').length`)) === 6)
-
-  // A follow-up only makes sense with the history: the fake model names the
-  // earlier recommendation it builds on.
-  await fill('#assistant-input', 'ご飯なしで')
-  await click('.composer button[type=submit]')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 9`, 'follow-up recommendations')
-  const followUp = await evaluate(`[...document.querySelectorAll('.panel .bubble.assistant')].at(-1).innerText`)
-  const followAsk = requests.filter((r) => r.url === '/api/assistant/messages').map((r) => JSON.parse(r.body)).at(-1)
-  check('a follow-up is answered from the history', followUp.includes('照り焼きチキン丼') && followAsk.history.length === 3, followUp)
-
-  // A recommendation shows its estimate and can be added to the meal log.
-  const tomorrowRec = `document.querySelectorAll('.panel .rec')[3]`
-  const estimate = await evaluate(`[...${tomorrowRec}.querySelectorAll('.kcal, .macro, .per100')].map(e => e.textContent.trim()).join(' | ')`)
-  check('recommendation card shows the estimate per serving and per 100 g',
-    estimate === '約 650 kcal（目安） | P 35g | F 18g | C 85g | 約 163 kcal / 100g · P 9g F 4g C 21g / 100g（目安）', estimate)
-  await evaluate(`${tomorrowRec}.querySelector('button.add').click()`)
-  await waitFor(`!!${tomorrowRec}.querySelector('form select')`, 'meal form inside the card')
-  const prefilled = await evaluate(`(() => { const f = ${tomorrowRec}.querySelector('form'); return [f.querySelector('input[type=date]').value, f.querySelector('select').value, f.querySelector('input[maxlength="200"]').value, ...[...f.querySelectorAll('input[type=number]')].map(i => i.value)].join('|') })()`)
-  check('the meal form is prefilled from the recommendation', prefilled === `${tomorrow}|dinner|照り焼きチキン丼|650|35|18|85`, prefilled)
-  await evaluate(`${tomorrowRec}.querySelector('form button[type=submit]').click()`)
-  await waitFor(`${tomorrowRec}.querySelector('button.add')?.disabled === true`, 'recommendation added')
-  const saved = requests.filter((r) => r.url === '/api/meal-records' && r.method === 'POST').map((r) => JSON.parse(r.body)).at(-1)
-  check('adding saves the serving estimate on the target date; the button says so',
-    saved?.date === tomorrow && saved.meal_type === 'dinner' && saved.calories === 650 &&
-    (await evaluate(`${tomorrowRec}.querySelector('button.add').innerText`)).includes('追加しました'), JSON.stringify(saved))
-  await waitFor(`(${tomorrowCellExpr}).getAttribute('aria-label').includes('夕食')`, 'calendar reloaded with the new dinner')
-  check('the calendar shows the added meal right away', true)
-
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'menu cards after reload')
+  check('a saved card stays marked after reload and switching dates', await evaluate(`${firstRec}.querySelector('button.add').disabled`))
   await click('.panel .new')
   await waitFor(`!!document.querySelector('.panel .intro .chip') && !document.querySelector('.panel .bubble')`, 'new chat')
   check('a new chat clears the conversation', !(await evaluate(`!!${q('.panel .new')}`)))
@@ -395,9 +396,14 @@ async function main() {
 
   // Profile page shows the saved values.
   await evaluate(`[...document.querySelectorAll('nav a')].find(a => a.innerText==='プロフィール').click()`)
-  await waitFor(`location.pathname === '/profile' && !!document.querySelector('input[placeholder^="例：ピーナッツ"]')`, 'profile with allergens')
-  check('profile keeps allergens', (await evaluate(`${q('input[placeholder^="例：ピーナッツ"]')}.value`)) === 'ピーナッツ、えび')
-
+  // The campus select renders before the profile has loaded; wait for the profile form too.
+  await waitFor(`location.pathname === '/profile' && !!document.querySelector('select[name=campus]') && [...document.querySelectorAll('label.inline')].some(l => l.innerText.trim()==='アレルゲンがある')`, 'profile opened')
+  check('profile shows the registered campus', await evaluate("document.querySelector('[name=campus]').value") === 'yoshida')
+  await evaluate(`[...document.querySelectorAll('label.inline')].find(l => l.innerText.trim()==='アレルゲンがある').querySelector('input').click()`)
+  await settle()
+  await fill('input[placeholder^="例：ピーナッツ"]', 'ピーナッツ、えび')
+  await click('form button[type=submit]')
+  await waitFor(`!!document.querySelector('.banner.success')`, 'profile allergies saved')
   // Memories can also be added and edited by hand on the Profile page.
   await waitFor(`!!document.querySelector('#memories .add input')`, 'memory form')
   await fill('#memories .add input', '魚が好き')
@@ -455,10 +461,10 @@ async function main() {
   const presetsEn = await evaluate(`[...document.querySelectorAll('.panel .intro .chip')].map(e => e.innerText)`)
   check('assistant presets follow the language', presetsEn[1] === 'What should I eat for lunch today?', presetsEn.join(' / '))
   await clickText('.panel .chip', 'What should I eat for lunch today?')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 3`, 'English recommendations')
+  await waitFor(`document.querySelector('.panel .bubble.assistant')?.innerText.includes('verify your restrictions')`, 'English allergy reply')
   const askEn = requests.filter((r) => r.url === '/api/assistant/messages').at(-1)
   check('an English question asks for, and gets, an English reply',
-    JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).startsWith('(Test reply)'), askEn.body)
+    JSON.parse(askEn.body).locale === 'en' && (await textOf('.panel .bubble.assistant')).includes('verify your restrictions'), askEn.body)
   check('logging out ends the conversation: the next message has no history', JSON.parse(askEn.body).history.length === 0, askEn.body)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')

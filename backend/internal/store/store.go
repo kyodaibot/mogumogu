@@ -26,9 +26,9 @@ func notFound(err error) error {
 
 // --- users ---
 
-func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (User, error) {
-	u := User{Username: username, PasswordHash: passwordHash}
-	err := s.db.WithContext(ctx).Select("Username", "PasswordHash").Create(&u).Error
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash, campus string) (User, error) {
+	u := User{Username: username, PasswordHash: passwordHash, Campus: campus}
+	err := s.db.WithContext(ctx).Select("Username", "PasswordHash", "Campus").Create(&u).Error
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return User{}, ErrUsernameTaken
 	}
@@ -49,6 +49,17 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	var u User
 	err := s.db.WithContext(ctx).Where("id = ?", id).Take(&u).Error
 	return u, notFound(err)
+}
+
+// SetCampus changes the home campus; it does not need a profile.
+func (s *Store) SetCampus(ctx context.Context, userID int64, campus string) (User, error) {
+	var u User
+	err := s.db.WithContext(ctx).Model(&u).Clauses(clause.Returning{}).
+		Where("id = ?", userID).Update("campus", campus).Error
+	if err == nil && u.ID == 0 {
+		err = ErrNotFound
+	}
+	return u, err
 }
 
 // ListUsers returns every user, oldest first. Only cmd/admin uses it.
@@ -106,7 +117,7 @@ func (s *Store) HasProfile(ctx context.Context, userID int64) (bool, error) {
 
 func (s *Store) GetProfile(ctx context.Context, userID int64) (Profile, error) {
 	var p Profile
-	err := s.db.WithContext(ctx).Where("user_id = ?", userID).Take(&p).Error
+	err := s.db.WithContext(ctx).Select("profiles.*, users.campus").Joins("JOIN users ON users.id = profiles.user_id").Where("profiles.user_id = ?", userID).Take(&p).Error
 	return p, notFound(err)
 }
 
@@ -114,12 +125,19 @@ func (s *Store) GetProfile(ctx context.Context, userID int64) (Profile, error) {
 func (s *Store) PutProfile(ctx context.Context, p Profile) (Profile, error) {
 	now := time.Now()
 	p.CreatedAt, p.UpdatedAt = now, now
-	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "user_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"height_cm", "weight_kg", "age", "has_exercise_habit", "allergens", "goal", "updated_at",
-		}),
-	}).Create(&p).Error
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if p.Campus != "" {
+			if err := tx.Model(&User{}).Where("id = ?", p.UserID).Update("campus", p.Campus).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"height_cm", "weight_kg", "age", "has_exercise_habit", "allergens", "goal", "updated_at",
+			}),
+		}).Create(&p).Error
+	})
 	if err != nil {
 		return Profile{}, err
 	}

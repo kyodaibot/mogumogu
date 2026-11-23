@@ -2,7 +2,7 @@
 // adding a state-management library.
 
 import { reactive, readonly } from 'vue'
-import { api, ApiError, type Me, type User } from './api'
+import { api, ApiError, type Campus, type Me, type User } from './api'
 import { clearChat } from './lib/chatStore'
 
 const state = reactive({
@@ -36,8 +36,8 @@ export const session = {
     apply(await api.login(username, password))
   },
 
-  async register(username: string, password: string) {
-    apply(await api.register(username, password))
+  async register(username: string, password: string, campus: Campus | null) {
+    apply(await api.register(username, password, campus))
   },
 
   async logout() {
@@ -52,6 +52,11 @@ export const session = {
 
   markProfileSaved() {
     state.hasProfile = true
+  },
+
+  async setCampus(campus: Campus) {
+    const { user } = await api.putCampus(campus)
+    state.user = user
   },
 
   /** The session expired or was revoked elsewhere. */

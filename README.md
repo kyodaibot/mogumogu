@@ -8,9 +8,10 @@ The design documents are in Chinese: long-term goals and shared conventions in [
 
 ## What it does
 
-- Sign up, log in and out; fill in a profile (body data, goal, allergens).
+- Sign up (choosing your Kyoto University campus: Yoshida, Uji or Katsura), log in and out; fill in a profile (body data, goal, allergens).
 - Record schedule events and meals on a calendar. Each day shows a meal tray, so a missing meal stands out.
-- Meal assistant (bottom right of the calendar): suggests three options for a meal, or answers questions about your own records. It runs on Claude (Amazon Bedrock) with a LangGraph agent that may query older records through the Go backend. A conversation keeps up to 10 turns, so follow-ups like "without rice" work; a reload or "New chat" starts over.
+- Meal assistant (bottom right of the calendar): suggests up to three options for a meal from today's Kyoto University co-op cafeteria menus, or answers questions about your own records. It runs on Claude (Amazon Bedrock) with a LangGraph agent that may query older records through the Go backend. Each card shows the cafeterias that serve the whole set, their opening hours for that meal, the published nutrition and when the menu was last checked; you pick the cafeteria (and, for the central cafeteria's breakfast plate, the variant), drop dishes you did not eat, and add it as one meal record. A conversation keeps up to 10 turns, so follow-ups like "without rice" work; a reload or "New chat" starts over.
+- Cafeteria menus: a separate importer (`importer/`) reads the seven cafeterias' published menus and opening hours every morning from 08:00 Japan time, retries what failed, and re-checks at 10:30. Dishes the site lists without calories are skipped.
 - Account tiers: every account is Normal (30 assistant messages a day); an administrator can make one Pro (100 a day) on the server. The tier is shown next to the username.
 - Change proposals (Pro): tell the assistant what you ate, or ask it to change or delete a record ("I had ramen for lunch", "delete yesterday's dinner"). It shows the changes on a card; nothing is saved until you press Run. Each proposal runs once, within 2 hours, and a record edited in the meantime is left alone.
 - Memories (Pro): lasting preferences you mention in the chat ("I don't like spicy food") are saved at once and used in every later conversation; a note under the reply shows what changed and lets you undo a new one. Only your own words in the current message can become a memory. Up to 30, listed on the Profile page, where you can also add, edit or delete them.
@@ -67,7 +68,8 @@ ai/                     # The meal assistant's AI service (Python, uv, FastAPI, 
   evals/                # Checks against the real model (make ai-eval)
 infra/                  # Terraform: bootstrap/ (state bucket), main/ (network, EC2, RDS, ECR, IAM, budget)
 deploy/                 # Production compose file, Caddyfile and deploy.sh run on the server
-scripts/                # put-secrets.sh (production secrets), seed-demo.mjs (demo data), seed-local.mjs (local test accounts)
+importer/               # Cafeteria menu importer (Python, uv): parses the co-op site, publishes daily menu snapshots; menus.dig schedules it
+scripts/                # kyoto_menu.py (print a cafeteria's menu as JSON), put-secrets.sh (production secrets), seed-demo.mjs (demo data), seed-local.mjs (local test accounts)
 contract/               # Limits and sample messages the browser, Go and the AI service share (tests only)
 docs/  plans/           # Design documents and phase plans (Chinese)
 backups/                # Output of make db-backup (not committed)
@@ -229,12 +231,13 @@ Open **http://localhost:8000**. Start order: database → migrations (the `migra
 ## Testing
 
 ```sh
-make test               # go vet, go test, pytest, npm run build (with type checks), npm test (default zone + TZ=UTC)
+make test               # go vet, go test, pytest (ai, importer), npm run build (with type checks), npm test (default zone + TZ=UTC)
 make test-integration   # needs the database running; includes the integration tests below
 make test-e2e           # browser end-to-end test, see below
 ```
 
 - **Integration tests**: each test **creates its own database** `mogumogu_test_*` on the compose PostgreSQL, migrates it and drops it afterwards, so development data is never touched. Without `TEST_DATABASE_URL` (for example a plain `go test ./...`) they are skipped with a note. They cover user isolation, persistence, events across midnight, null versus 0 in nutrition, token revocation on logout, CSRF bound to the session, login rate limits, and the assistant's context, language, history, rate limit and per-tier quota, change proposals (Pro only, run once, expiry, optimistic lock, another user's records), and memories (Pro only, limits, duplicates, the optimistic lock, nothing saved with an unanswered message, kept but unused after a downgrade).
+- **Menu importer tests** (pytest in `importer/`): parsing of detail pages (`-kcal` skipped, `0 kcal` kept, missing macros left empty), the listing's links and categories, opening hours from the feed and reviewed notices, and the schedule. With `TEST_DATABASE_URL` (as in `make test-integration`) one test runs on its own `mogumogu_test_menu_*` database: partial failures, retrying only the failed details, the 10:30 re-check without a new version, a new snapshot the next day, and discarding a run that crosses midnight.
 - **AI service tests** (pytest): only a scripted fake model, no AWS. They cover every path of the agent loop (step limit, forced finish, one validation retry, allergen check, at most 6 model calls), the query tools' date limits and error handling, and the reply language setting.
 - **Evaluation** (`make ai-eval`, not part of `make test`): 12 cases against the real model, in Japanese and English (allergens, no records, more than 31 days of records, an off-topic request, no meal given, allergens typed in Japanese with an English interface, a Japanese question with an English interface), and five multi-turn ones (a follow-up without rice, "the second one", a forged history claiming an allergen is fine in Japanese and English, nine turns of history). Each reply, its step count, tokens and time are printed, and the reply language is checked.
 - **Contract tests**: `contract/` holds the meal assistant's shared limits and a sample request and reply. Go, pytest and Vitest each check their own constants against it, Go checks the request it builds and pytest checks that the AI service reads it, and both check the reply. See `contract/README.md`.

@@ -20,6 +20,7 @@ feature. A message that also records a meal stages both.
 
 import json
 import re
+from datetime import datetime, timedelta
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
@@ -143,6 +144,54 @@ def _meal(text: str) -> str | None:
     return next((v for k, v in _MEALS.items() if k in lowered), None)
 
 
+def _menu_reply(context: dict, messages, meal_type: str, message: str, use_today: bool):
+    """Exercise the real Go query and menu-selection boundary in local/e2e runs."""
+    ja = context["locale"] == "ja"
+    payload = None
+    for m in reversed(messages):
+        if isinstance(m, ToolMessage) and isinstance(m.content, str) and m.content.startswith("{"):
+            data = json.loads(m.content)
+            if "stores" in data:
+                payload = data
+                break
+    if payload is None:
+        args = {"meal_type": meal_type}
+        if use_today:
+            args["use_today"] = True
+        eating_time = re.search(r"(?<![0-9])(?:[01]?[0-9]|2[0-3]):[0-5][0-9]", message)
+        if eating_time:
+            args["time"] = eating_time.group().zfill(5)
+        elif "今すぐ" in message or "right now" in message:
+            args["time"] = datetime.fromisoformat(context["now"]).strftime("%H:%M")
+        return reply(tool_call("get_cafeteria_menu", **args))
+    # The fake cannot interpret free-text allergies or memories semantically.
+    # Abstain with restricted inputs rather than suggest a misleading test meal.
+    if (context.get("profile") or {}).get("allergens") or context.get("memories"):
+        return reply(tool_call("submit_reply", reply="登録内容と原材料を確認できません。" if ja
+                               else "I could not verify your restrictions against the menu."))
+    shared: dict[str, list[str]] = {}
+    for store in payload["stores"]:
+        for item in store["items"]:
+            shared.setdefault(item["id"], []).append(store["id"])
+    if payload["status"] != "ready" or not shared:
+        return reply(tool_call("submit_reply", reply="この食事のメニューを確認できません。" if ja
+                               else "There is no confirmed menu for this meal."))
+    reason = "指定した食事の提供メニューです。" if ja else "Listed for the requested meal."
+    if meal_type == "breakfast":
+        choices = [{"reason": reason, "store_ids": next(iter(shared.values())),
+                    "items": [{"id": item_id, "portions": 1} for item_id in shared]}]
+    else:
+        choices = [{"reason": reason, "store_ids": stores, "items": [{"id": item_id, "portions": 1}]}
+                   for item_id, stores in list(shared.items())[:3]]
+    text = "学食のメニューです。" if ja else "From the cafeteria menu."
+    if use_today:
+        day = payload["menu_date"]
+        text = (f"{day} のメニューを参考にしています。明日の提供は未確認です。" if ja
+                else f"Based on the {day} menu. Tomorrow’s availability is unconfirmed.")
+    return reply(tool_call("submit_reply", reply=text,
+                           meal_type=meal_type, menu_query_id=payload["query_id"], menu_selections=choices))
+
+
 class DemoModel:
     async def ainvoke(self, messages, tools, force_tool=None, may_retry=lambda: False):
         first = next(m.content for m in messages if isinstance(m, HumanMessage))
@@ -160,8 +209,24 @@ class DemoModel:
         if staging:
             return reply(staging)
         meal_type = _meal(lowered)
-        recs = [{**r, "estimate": e} for r, e in zip(t["recommendations"], _ESTIMATES)]
         earlier = [turn for turn in _block(first, "history") or [] if turn["recommendations"]]
+        context = _block(first, "context")
+        if context.get("campus") and (meal_type or earlier or any(a in lowered for a in _ASK)):
+            if not meal_type and earlier:
+                meal_type = _meal(earlier[-1]["user"])
+            now = datetime.fromisoformat(context["now"])
+            use_today = context["target_date"] == (now.date() + timedelta(days=1)).isoformat() and (
+                bool(re.search(r"今日の.{0,14}メニュー(?:で|を参考)", lowered))
+                or any(term in lowered for term in ("use today's menu", "use today’s menu", "use the current menu"))
+            )
+            if context["target_date"] > now.date().isoformat() and not use_today:
+                text = ("明日のメニューが更新されてから確認しますか？" if context["locale"] == "ja"
+                        else "Would you like to check back after tomorrow’s menu is updated?")
+                return reply(tool_call("submit_reply", reply=text))
+            if not meal_type:
+                meal_type = "breakfast" if now.hour < 10 else "lunch" if now.hour < 15 else "dinner"
+            return _menu_reply(context, messages, meal_type, lowered, use_today)
+        recs = [{**r, "estimate": e} for r, e in zip(t["recommendations"], _ESTIMATES)]
         if any(a in lowered for a in _ASK) and meal_type:
             args = {"reply": t["recommend"], "recommendations": recs, "meal_type": meal_type}
         elif earlier and not any(a in lowered for a in _ASK):
