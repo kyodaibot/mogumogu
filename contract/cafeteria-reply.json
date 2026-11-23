@@ -1,0 +1,20 @@
+{
+  "reply": "中央食堂で朝食プレートを選べます。",
+  "recommendations": [],
+  "ask_meal_type": false,
+  "meal_type": "breakfast",
+  "menu_query_id": "q1",
+  "menu_selections": [
+    {
+      "reason": "授業前の朝食に",
+      "items": [
+        {"id": "breakfast_a", "portions": 1},
+        {"id": "breakfast_b", "portions": 1}
+      ],
+      "store_ids": ["650111"]
+    }
+  ],
+  "sources": [],
+  "changes": [],
+  "memory_changes": []
+}

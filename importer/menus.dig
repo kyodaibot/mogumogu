@@ -1,0 +1,10 @@
+timezone: Asia/Tokyo
+
+schedule:
+  cron>: '* 8-23 * * *'
+  skip_on_overtime: true
+  skip_delayed_by: 2m
+
++import_due_cafeterias:
+  # In the image (importer/Dockerfile) python is the importer's venv.
+  sh>: python jobs.py

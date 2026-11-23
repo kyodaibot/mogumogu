@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack"]
+Campus = Literal["yoshida", "uji", "katsura"]
 
 # Sources one reply may cite; Go has the same limit.
 MAX_SOURCES = 5
@@ -63,6 +64,7 @@ class Context(BaseModel):
     """The initial context Go assembles for every message (project-review 3.6)."""
 
     target_date: date
+    campus: Campus | None = None
     now: datetime
     timezone: str
     # The interface language, which the reply is written in.
@@ -104,17 +106,9 @@ class Turn(BaseModel):
     date: date
     message: str = Field(min_length=1, max_length=500)
     reply: str = Field(min_length=1, max_length=1000)
-    recommendations: list[HistoryDish] = Field(default_factory=list)
+    recommendations: list[HistoryDish] = Field(default_factory=list, max_length=3)
     # The change proposal of that reply, if it had one.
     changes: list[HistoryChange] = Field(default_factory=list, max_length=10)
-
-    @field_validator("recommendations")
-    @classmethod
-    def zero_or_three(cls, v: list[HistoryDish]) -> list[HistoryDish]:
-        if len(v) not in (0, 3):
-            raise ValueError("recommendations must be empty or exactly 3")
-        return v
-
 
 class ReplyRequest(BaseModel):
     """Body of POST /internal/reply, sent by Go."""
@@ -251,12 +245,28 @@ class Recommendation(BaseModel):
     estimate: Estimate
 
 
-class SubmitReply(BaseModel):
-    """Arguments of the submit_reply tool, which is also the API response."""
+class MenuPortion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=100, description="Exact item id from the menu query")
+    portions: int = Field(ge=1, le=10, strict=True)
+
+
+class MenuSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=200)
+    items: list[MenuPortion] = Field(min_length=1, max_length=12)
+    store_ids: list[str] = Field(min_length=1, max_length=7,
+                                 description="All reviewed stores serving every item with suitable allergen labels")
+
+
+class MenuSubmitReply(BaseModel):
+    """The submit_reply tool offered to users whose context includes a campus."""
 
     reply: str = Field(min_length=1, max_length=1000, description="Reply text for the user")
-    recommendations: list[Recommendation] = Field(
-        default_factory=list, description="Empty without recommendations, otherwise exactly 3"
+    menu_query_id: str | None = Field(default=None, description="query_id from this turn for menu_selections")
+    menu_selections: list[MenuSelection] = Field(
+        default_factory=list, max_length=3,
+        description="Up to three Kyoto cafeteria choices. Breakfast: one choice with eligible alternatives.",
     )
     ask_meal_type: bool = Field(
         default=False,
@@ -264,13 +274,20 @@ class SubmitReply(BaseModel):
     )
     meal_type: MealType | None = Field(
         default=None,
-        description="The meal all three recommendations are for; required with recommendations, otherwise null",
+        description="The meal these recommendations or menu selections are for; required with recommendations, otherwise null",
     )
     sources: list[str] = Field(
         default_factory=list,
         description="url of each web_search result the reply uses, copied exactly; empty when you did not search",
     )
 
+
+class SubmitReply(MenuSubmitReply):
+    """Shared API response. Older clients can still receive estimated recommendations."""
+
+    recommendations: list[Recommendation] = Field(
+        default_factory=list, description="Empty without recommendations, otherwise exactly 3"
+    )
     @field_validator("recommendations")
     @classmethod
     def zero_or_three(cls, v: list[Recommendation]) -> list[Recommendation]:
@@ -292,15 +309,20 @@ class SubmitReply(BaseModel):
         # A text-only reply often still carries the meal it was about (or a
         # made-up value). It means nothing there, so drop it rather than
         # reject a reply that is otherwise fine.
-        if isinstance(data, dict) and not data.get("recommendations"):
+        if isinstance(data, dict) and not data.get("recommendations") and not data.get("menu_selections"):
             return {**data, "meal_type": None}
         return data
 
     @model_validator(mode="after")
     def no_recommendations_when_asking(self) -> "SubmitReply":
-        if self.ask_meal_type and self.recommendations:
+        if self.menu_selections and self.recommendations:
+            raise ValueError("choose only one recommendation format")
+        if bool(self.menu_selections) != bool(self.menu_query_id):
+            raise ValueError("menu_selections must identify the query they came from")
+        has_cards = bool(self.recommendations or self.menu_selections)
+        if self.ask_meal_type and has_cards:
             raise ValueError("no recommendations allowed when ask_meal_type is true")
-        if self.recommendations and self.meal_type is None:
+        if has_cards and self.meal_type is None:
             raise ValueError("meal_type is required with recommendations")
         return self
 

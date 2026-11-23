@@ -74,9 +74,9 @@ func TestRequestMatchesTheContract(t *testing.T) {
 	}
 	stamp := at("2026-10-20T08:00:00+09:00")
 	ctx := assistantContext(contextData{
-		Target: day("2026-10-27"), Now: at("2026-10-27T11:30:00+09:00"), Locale: "ja", Pro: true,
+		Target: day("2026-10-27"), Now: at("2026-10-27T11:30:00+09:00"), Locale: "ja", Campus: "yoshida", Pro: true,
 		Profile: &store.Profile{
-			HeightCM: 170, WeightKG: 60.5, Age: 21, HasExerciseHabit: true, Goal: "build_muscle",
+			Campus: "yoshida", HeightCM: 170, WeightKG: 60.5, Age: 21, HasExerciseHabit: true, Goal: "build_muscle",
 			Allergens: store.NullStringArray{Items: []string{"えび", "ピーナッツ"}, Valid: true},
 			CreatedAt: stamp, UpdatedAt: stamp,
 		},

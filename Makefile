@@ -12,7 +12,7 @@ AI_PORT := 8090
 WITH_ENV := set -a; . ./.env; set +a;
 
 .PHONY: help setup check-env db db-stop db-down migrate-up migrate-down migrate-version migrate-create \
-	backend backend-build frontend ai ai-eval seed-local admin dev test test-integration test-e2e app-up app-down app-logs db-backup \
+	backend backend-build frontend ai ai-eval seed-local admin menu-import dev test test-integration test-e2e app-up app-down app-logs db-backup \
 	push deploy
 
 help:
@@ -26,9 +26,10 @@ help:
 	@echo "  ai                Run the AI service in the foreground (127.0.0.1:$(AI_PORT); needs AWS credentials, see README)"
 	@echo "  ai-eval           Run the meal assistant's eval cases against the real model (costs a few cents)"
 	@echo "  seed-local        Reset the local test accounts busy (pro), normal and light (needs 'make dev'; password: SEED_PASSWORD in .env)"
+	@echo "  menu-import       One importer tick for the cafeteria menus on the local database (optional STORE=650111)"
 	@echo "  admin             Account administration on the local database: ARGS=\"users\" or ARGS=\"tier <username> <normal|pro>\""
-	@echo "  test              Unit tests and builds: go vet, go test, pytest, npm run build, npm test"
-	@echo "  test-integration  Backend tests against PostgreSQL (needs 'make db'; uses throwaway databases)"
+	@echo "  test              Unit tests and builds: go vet, go test, pytest (ai, importer), npm run build, npm test"
+	@echo "  test-integration  Backend and menu importer tests against PostgreSQL (needs 'make db'; uses throwaway databases)"
 	@echo "  test-e2e          Browser test of the whole UI in headless Chrome (throwaway database, ports 18080/15173)"
 	@echo "  migrate-up        Apply all pending migrations"
 	@echo "  migrate-down      Roll back the most recent migration"
@@ -110,6 +111,13 @@ seed-local: check-env
 admin: check-env
 	@$(WITH_ENV) cd backend && go run ./cmd/admin $(ARGS)
 
+# Reads the public co-op site. Locally the importer uses the app's database
+# user unless MENU_DATABASE_URL is set; production uses its own role (docs/operations.md 6.14).
+menu-import: check-env
+	@$(WITH_ENV) cd importer && \
+	MENU_DATABASE_URL="$${MENU_DATABASE_URL:-postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE}" \
+	uv run --locked jobs.py $(if $(STORE),--store $(STORE))
+
 # Backend, AI service and frontend run as background jobs of one shell. On
 # Ctrl+C the terminal already delivers SIGINT to the backend (Go re-enables
 # it) and to uvicorn, so the INT trap only stops the frontend. Both must get a
@@ -134,6 +142,7 @@ dev: db migrate-up backend-build frontend/node_modules
 test: frontend/node_modules
 	cd backend && go vet ./... && go test ./...
 	cd ai && uv run pytest -q
+	cd importer && uv run --locked pytest -q
 	cd frontend && npm run build && npm test && TZ=UTC npm test
 
 # Each test creates and drops its own mogumogu_test_* database on the compose
@@ -142,6 +151,9 @@ test-integration: check-env db
 	@$(WITH_ENV) cd backend && \
 	TEST_DATABASE_URL="postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE" \
 	go test -count=1 ./...
+	@$(WITH_ENV) cd importer && \
+	TEST_DATABASE_URL="postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE" \
+	uv run --locked pytest -q
 
 # Creates and drops its own mogumogu_e2e_* database; see e2e/run.sh.
 test-e2e: check-env db backend-build frontend/node_modules
@@ -182,7 +194,7 @@ app-logs: check-env
 # refused: the image would not match the commit it is named after.
 AWS_REGION := ap-northeast-1
 # Service name -> Dockerfile. backend also provides migrate.
-IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile
+IMAGES := backend:backend/Dockerfile web:frontend/Dockerfile ai:ai/Dockerfile importer:importer/Dockerfile
 
 push:
 	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make push"; exit 1; }
@@ -213,7 +225,7 @@ deploy:
 	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_PROFILE, e.g. AWS_PROFILE=Teiyou make deploy"; exit 1; }
 	@set -eo pipefail; export AWS_REGION=$(AWS_REGION); tag=$(TAG); \
 	[[ $$tag =~ ^[0-9a-f]{7,40}$$ ]] || { echo "TAG must be a commit ID, got: $$tag"; exit 1; }; \
-	for svc in backend web ai; do \
+	for svc in backend web ai importer; do \
 		aws ecr describe-images --repository-name mogumogu/$$svc --image-ids imageTag=$$tag >/dev/null 2>&1 || \
 			{ echo "mogumogu/$$svc:$$tag is not in ECR; run make push on that commit first"; exit 1; }; \
 	done; \

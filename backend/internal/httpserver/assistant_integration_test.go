@@ -29,30 +29,29 @@ type fakeAI struct {
 	memoryChanges []assistant.MemoryChange
 	sources       []assistant.Source
 	// Runs while the reply is being made, as if the user acted meanwhile.
-	during func()
+	during    func()
+	menuReply func(assistant.Request) (assistant.Reply, error)
 }
 
 func (f *fakeAI) Reply(_ context.Context, req assistant.Request) (assistant.Reply, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
+	if f.menuReply != nil {
+		return f.menuReply(req)
+	}
 	if f.fail {
 		return assistant.Reply{}, errors.New("ai service: status 503 invalid_output")
 	}
 	if f.during != nil {
 		f.during()
 	}
-	lunch := "lunch"
 	return assistant.Reply{
-		Reply: "这是三个方案：",
-		Recommendations: []assistant.Recommendation{{Name: "a", Description: "b", Reason: "c", Estimate: assistant.Estimate{
-			Serving: assistant.Nutrition{Calories: 650, ProteinG: 35, FatG: 18, CarbsG: 85},
-			Per100g: assistant.Nutrition{Calories: 163, ProteinG: 9, FatG: 4, CarbsG: 21},
-		}}},
-		MealType:      &lunch,
-		Changes:       f.changes,
-		MemoryChanges: f.memoryChanges,
-		Sources:       f.sources,
+		Reply:           "ok",
+		Recommendations: []assistant.Recommendation{},
+		Changes:         f.changes,
+		MemoryChanges:   f.memoryChanges,
+		Sources:         f.sources,
 	}, nil
 }
 
@@ -84,6 +83,7 @@ func newAssistantEnv(t *testing.T, db *testdb.DB, limits DailyLimits) assistantE
 	}
 	ai := &fakeAI{}
 	st := store.New(db.Gorm)
+	menuRequests := &MenuRequests{}
 	srv := httptest.NewServer(NewRouter(Deps{
 		Logger:           discardLogger(),
 		DB:               db.SQL,
@@ -95,10 +95,10 @@ func newAssistantEnv(t *testing.T, db *testdb.DB, limits DailyLimits) assistantE
 		AssistantLimiter: auth.NewLimiter(6, time.Minute),
 		AllowedOrigins:   []string{testOrigin},
 		Assistant:        ai,
-		AgentTokens:      tokens,
-		AssistantLimits:  limits,
+		AgentTokens:      tokens, MenuRequests: menuRequests,
+		AssistantLimits: limits,
 	}))
-	internal := httptest.NewServer(NewInternalRouter(InternalDeps{Logger: discardLogger(), Store: st, AgentTokens: tokens}))
+	internal := httptest.NewServer(NewInternalRouter(InternalDeps{Logger: discardLogger(), Store: st, AgentTokens: tokens, MenuRequests: menuRequests}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(internal.Close)
 	return assistantEnv{srv: srv, internal: internal, ai: ai, tokens: tokens, store: st}
@@ -151,8 +151,7 @@ func TestIntegrationAssistantContext(t *testing.T) {
 
 	var got assistant.Reply
 	b.expect(200, "POST", "/api/assistant/messages", message(day(0), "  午餐吃什么  ")).json(t, &got)
-	if got.Reply != "这是三个方案：" || len(got.Recommendations) != 1 || got.MealType == nil || *got.MealType != "lunch" ||
-		got.Recommendations[0].Estimate.Serving.Calories != 650 || got.Recommendations[0].Estimate.Per100g.CarbsG != 21 {
+	if got.Reply != "ok" || len(got.Recommendations) != 0 || got.MealType != nil {
 		t.Fatalf("reply passed through: %+v", got)
 	}
 
@@ -410,7 +409,7 @@ func TestIntegrationAssistantHistory(t *testing.T) {
 		"bad date":          {withHistory("2026-10-31", "hi", ok, turn("2026-02-30", "q", "a")), "history[1].date"},
 		"blank message":     {withHistory("2026-10-31", "hi", turn("2026-10-31", "  ", "a")), "history[0].message"},
 		"long reply":        {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", long(1001))), "history[0].reply"},
-		"two dishes":        {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", "a", "x", "y")), "history[0].recommendations"},
+		"four dishes":       {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", "a", "x", "y", "z", "w")), "history[0].recommendations"},
 		"long dish name":    {withHistory("2026-10-31", "hi", turn("2026-10-31", "q", "a", "x", "y", long(81))), "history[0].recommendations[2].name"},
 		"blank description": {withHistory("2026-10-31", "hi", map[string]any{"date": "2026-10-31", "message": "q", "reply": "a", "recommendations": []map[string]string{{"name": "x", "description": " "}, {"name": "x", "description": "d"}, {"name": "x", "description": "d"}}}), "history[0].recommendations[0].description"},
 	} {

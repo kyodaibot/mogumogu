@@ -74,12 +74,11 @@ make db-backup
 
 ### 5.2 恢复演练（不影响开发库）
 
-把备份恢复到一个新建的临时库，检查后删除。库名以 `mogumogu_restore_` 开头，以免和开发库混淆。在仓库根目录执行：
+把备份恢复到一个新建的临时库，检查后删除。库名以 `mogumogu_restore_` 开头，以免和开发库混淆。演练新备份时，按 5.1 停止应用，从备份到核对结束都保持开发库无写入、无迁移。在仓库根目录执行：
 
 ```sh
 F=backups/mogumogu-20261024-161241.dump   # 要检查的备份
 R=mogumogu_restore_check                  # 临时库
-Q="SELECT 'users', count(*) FROM users UNION ALL SELECT 'profiles', count(*) FROM profiles UNION ALL SELECT 'schedule_events', count(*) FROM schedule_events UNION ALL SELECT 'meal_records', count(*) FROM meal_records UNION ALL SELECT 'revoked_tokens', count(*) FROM revoked_tokens"
 
 # 1. 新建临时库
 docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" "$1"' _ "$R"
@@ -87,17 +86,24 @@ docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" "$1"' _ "$R"
 # 2. 恢复；出错时立即停止，退出码不为 0
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$1" --no-owner --exit-on-error' _ "$R" < "$F"
 
-# 3. 检查：迁移版本应为 5、dirty 为 f；两边各表行数应相同
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$1" -At -c "SELECT version, dirty FROM schema_migrations"' _ "$R"
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$1" -At -c "$2"' _ "$R" "$Q"
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"' _ "$Q"
+# 3. 核对迁移版本、dirty 状态和 public 中各表的实际行数
+check_db() {
+  docker compose exec -T postgres sh -c 'exec psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "${1:-$POSTGRES_DB}"' _ "$1" <<'SQL'
+SELECT version, dirty FROM public.schema_migrations;
+SELECT format('SELECT %L, count(*) FROM %I.%I', tablename, schemaname, tablename)
+FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
+\gexec
+SQL
+}
+check_db ""     # 源库
+check_db "$R"   # 恢复库
 
 # 4. 删除临时库（检查失败时也要执行）
 docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 ```
 
 - `sh -c '…' _ "$R"` 的写法把参数传进容器，用户名和库名都取自容器内的环境变量，不需要在命令里写密码。
-- 行数不同时，最可能的原因是备份之后又有写入。停止应用后重新备份、再演练一次。
+- 新备份的两份输出应一致，且 `dirty` 应为 `f`。演练旧备份时，用备份时记录的迁移版本和行数核对；缺少当时的记录时，只能确认备份能恢复并查看恢复后的状态。
 
 2026-10-24 实际演练的结果：恢复成功，迁移版本 5、`dirty = f`，5 张表的行数与开发库一致，临时库已删除，开发库的行数没有变化。
 
@@ -129,8 +135,8 @@ docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$1"' _ "$R"
 | 服务器 | 一台 EC2 t4g.micro（arm64），固定公网 IP；安全组只开放 80/443，没有 SSH | `infra/main/compute.tf`、`network.tf` |
 | 容器 | Caddy（HTTPS 证书自动申请和续期）→ Nginx → 后端 / AI 服务；`migrate` 每次部署先执行一次 | `deploy/compose.yaml`、`deploy/Caddyfile` |
 | 数据库 | RDS PostgreSQL 17，私有子网，只允许服务器访问，强制 TLS；每天自动备份，保留 7 天 | `infra/main/database.tf` |
-| 镜像 | ECR 的 `mogumogu/{backend,web,ai}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
-| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥、Tavily 的 API Key 和 Langfuse 的两个 Key 是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、6.12、6.13、`infra/main/settings.tf` |
+| 镜像 | ECR 的 `mogumogu/{backend,web,ai,importer}`，标签是 12 位提交号，不可覆盖，保留最近 10 个 | `infra/main/registry.tf` |
+| 配置和密钥 | SSM Parameter Store `/mogumogu/*`：3 个密钥、Tavily 的 API Key、Langfuse 的两个 Key 和菜单导入器的数据库密码是 SecureString，域名、数据库地址、模型 ID 是普通参数 | `scripts/put-secrets.sh`、6.12、6.13、6.14、`infra/main/settings.tf` |
 | 外部服务 | Tavily（网络搜索，只发送搜索关键词），免费额度，不绑卡（6.12）；Langfuse 日本区域（AI 服务的 trace，含完整内容，保留 30 天），免费计划（6.13） | `deploy/compose.yaml` |
 | 权限 | 服务器的 IAM 角色：Session Manager、指定的 Bedrock 模型、拉取镜像、读取 `/mogumogu/*` 和部署桶、向日志组写入日志。**没有任何长期 Access Key** | `infra/main/iam.tf` |
 | 日志和告警 | 所有容器的日志写入 CloudWatch Logs `/mogumogu/app`，保留 14 天；访客收到 5xx 时发邮件（6.6） | `infra/main/logs.tf`、`deploy/compose.yaml` |
@@ -157,7 +163,7 @@ AWS_PROFILE=Teiyou make deploy   # 部署 HEAD；也可以指定 TAG=<12 位提�
 ```
 
 `make deploy` 的过程如下：
-1. 确认三个镜像都已在 ECR 中。
+1. 确认四个镜像（backend、web、ai、importer）都已在 ECR 中。
 2. 把 `deploy/` 上传到部署桶。
 3. 通过 SSM Run Command 让服务器下载这些文件，并执行 `deploy.sh`。
 4. 等待执行完成，打印输出。失败时返回非 0。
@@ -341,7 +347,7 @@ read -rs DEMO_PASSWORD && export DEMO_PASSWORD   # 密码不会显示，也不�
 node scripts/seed-demo.mjs                        # 默认作用于线上；SEED_URL=http://localhost:8000 可用于本地
 ```
 
-日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号的密码是公开的，所以始终保持 Normal 等级（6.10），每天最多可以问 AI 30 次。全站每天合计 100 次。
+日期按运行当天计算。重新执行时，会先删除这段时间内的记录再重新写入，所以数据变旧或被访客改乱时，再执行一次即可。演示账号的密码是公开的，所以始终保持 Normal 等级（6.10）。个人和全站额度见 [API 约定 §9.2](api.md#92-调用额度)。
 
 ### 6.9 本地测试账号
 
@@ -457,6 +463,87 @@ AWS_PROFILE=Teiyou aws ssm get-parameters --region ap-northeast-1 --names /mogum
 **查一条消息：** Tracing → Traces，按环境 `prod` 筛选，再按 User ID（数据库里的用户 ID，用 6.10 的 `users` 查）或时间找到那条 `reply`。标签有等级（`normal` / `pro`）和语言（`ja` / `en`）。CloudWatch 日志中没有 trace ID，用时间和用户对上。
 
 **不可用或额度用完时：** SDK 在后台批量发送，失败只丢 trace，回复不受影响；AI 服务关闭时最多等 `LANGFUSE_TIMEOUT`（默认 5 秒）把剩下的发完。免费额度用完后当月不再接收新的 trace。用量在 Langfuse 的 Settings → Billing 查看。
+
+### 6.14 食堂菜单导入（importer）
+
+`importer/` 是独立于 Go 后端和 AI 服务的 Python 程序，读取生协公开的菜单和营业时间，写入 7 张菜单相关表（计划见 `plans/cafeteria-menus.md`）。用户请求只读数据库，从不等待官网。
+
+**每次运行做什么：** `jobs.py` 对每家食堂各推进一步：08:00 起是早间采集，10:30 起是午前复查。失败的部分记在 `menu_import_jobs`，按 10 分钟、30 分钟、之后每小时重试，跨日后不再处理前一天。同一家食堂用 PostgreSQL advisory lock 保证只有一个进程在采集。所以调度器只需要「每分钟跑一次」，到期与否由任务表决定，重启或漏跑都能接着做。`importer/menus.dig` 是 Digdag 的写法：日本时间 08:00–23:59 每分钟一次。
+
+**本地：**
+
+```sh
+make menu-import              # 七家食堂各推进一步（08:00 前什么都不做）
+make menu-import STORE=650111 # 只处理中央食堂
+uv run scripts/kyoto_menu.py --store 650111   # 只打印官网菜单 JSON，不写数据库
+```
+
+本地默认用 `.env` 里的 `DB_USER`；设了 `MENU_DATABASE_URL` 时用它。
+
+**线上运行：** `deploy/compose.yaml` 的 `importer` 服务（镜像 `importer/Dockerfile`）里，Digdag 0.10.5.1（Java 11）以本地模式运行 `digdag scheduler`，按 `importer/menus.dig` 每分钟启动一次 `jobs.py`。上一次还没跑完时跳过这一分钟（`skip_on_overtime`），所以早上第一次采集七家食堂（本地实测约 3.5 分钟）不会叠在一起。Digdag 的运行记录只在内存里，重启就清空；要不要采集只看 `menu_import_jobs`，所以重启或重新部署后下一分钟接着做，不会重复发布。日志与其他容器一样写入 CloudWatch，日志流名以 `mogumogu-importer-1/` 开头，每家食堂一行 `<店号> morning|review: complete`，失败时是错误原因。
+
+**内存：** 实例只有 1 GB（2026-11-23 夜间空闲时可用约 459 MB）。JVM 堆限制为 160 MB，容器上限 384 MB；本地实测导入中约 220 MB、空闲约 175 MB。Digdag 不会清理内存里的历史运行记录，堆满时 JVM 直接退出（`-XX:+ExitOnOutOfMemoryError`），由 compose 重启。上线后在午饭前后查看：
+
+```sh
+free -m
+sudo docker stats --no-stream
+sudo docker inspect -f '{{.RestartCount}}' mogumogu-importer-1   # 持续增加说明堆不够
+```
+
+若 swap 持续增长或其他服务变慢，把 `infra/main/variables.tf` 的 `instance_type` 改为 `t4g.small`（2 GB）后 `terraform apply`。实例会停机几分钟，先看 `terraform plan` 是否为原地修改。
+
+**专用数据库角色（线上）：** 导入器以 `menu_importer` 连接，只能改菜单表，不能读 `users`、饮食记录等用户数据。密码存在 SSM 的 `/mogumogu/menu_db_password`，`deploy.sh` 写入服务器的 `.env`，compose 拼成 `MENU_DATABASE_URL`（`sslmode=require`）。第一次上线按以下顺序做，每步只做一次：
+
+1. 本机执行 `AWS_PROFILE=Teiyou terraform -chdir=infra/main apply`：新建 ECR 仓库 `mogumogu/importer`，部署角色和服务器角色随之获得该仓库的权限。
+2. 本机生成密码并存入 SSM（做法同 6.12：不显示在屏幕上，不留在 shell 历史和 `ps` 中）。**要在合并到 master 之前做**，否则 `deploy.sh` 读不到参数，部署失败：
+
+   ```zsh
+   umask 077; f=$(mktemp)
+   printf '{"Name":"/mogumogu/menu_db_password","Type":"SecureString","Value":"%s","Tags":[{"Key":"Project","Value":"mogumogu"}]}' "$(openssl rand -hex 24)" > "$f"
+   AWS_PROFILE=Teiyou aws ssm put-parameter --region ap-northeast-1 --cli-input-json "file://$f" >/dev/null && echo created
+   rm -f "$f"
+   AWS_PROFILE=Teiyou aws ssm get-parameter --region ap-northeast-1 --name /mogumogu/menu_db_password --query 'Parameter.[Name,Type]' --output text
+   ```
+
+3. 合并到 master，自动部署，迁移 000010、000011 建好菜单表。此时角色还不存在，若在 08:00–23:59 之间，导入器每分钟连接失败一次并记日志，不影响其他服务。
+4. 按 6.5 登录服务器，用 RDS 管理员（`mogumogu`）创建角色。密码从 SSM 读，不在屏幕上出现：
+
+   ```sh
+   sudo -i
+   cd /opt/mogumogu && set -a && . ./.env && set +a
+   MENU_PW=$(aws ssm get-parameter --region ap-northeast-1 --name /mogumogu/menu_db_password \
+     --with-decryption --query Parameter.Value --output text)
+   docker run --rm -i -e PGPASSWORD="$DB_PASSWORD" postgres:17-alpine \
+     psql "host=$DB_HOST dbname=mogumogu user=mogumogu sslmode=require" -v ON_ERROR_STOP=1 -v pw="$MENU_PW" <<'SQL'
+   CREATE ROLE menu_importer LOGIN PASSWORD :'pw';
+   GRANT CONNECT ON DATABASE mogumogu TO menu_importer;
+   GRANT USAGE ON SCHEMA public TO menu_importer;
+   GRANT SELECT ON cafeterias TO menu_importer;
+   GRANT SELECT, INSERT, UPDATE ON cafeteria_hours, menu_snapshots, menu_items, menu_import_jobs TO menu_importer;
+   SQL
+   unset MENU_PW
+   exit
+   ```
+
+   下一分钟起导入器就能连上（08:00 之前什么都不做）。确认方法见下面的「查看进度」。
+
+**更换密码：** 同第 2 步生成新值，JSON 里加 `"Overwrite":true` 并去掉 `Tags`，在服务器上执行 `ALTER ROLE menu_importer PASSWORD :'pw'`（同第 4 步），再重新部署一次让 `.env` 更新。
+
+**临时营业公告：** 生协把学园祭、节假日等特别安排发布为 PDF（图片）。`importer/hours_notices.json` 是人工核对过的时段表，以 PDF 的 SHA-256 为键。官网换了新 PDF 而表里没有它时，相关食堂的营业时间记为「未知」，卡片附官网链接，菜单照常导入。核对新 PDF 后在表中加一项即可。
+
+**查看进度：**
+
+```sql
+-- 今天每家食堂的最新快照和最后核对时间
+SELECT c.name, s.version, s.checked_at FROM cafeterias c
+LEFT JOIN LATERAL (SELECT * FROM menu_snapshots m WHERE m.cafeteria_id=c.id
+  AND m.menu_date=(now() AT TIME ZONE 'Asia/Tokyo')::date ORDER BY version DESC LIMIT 1) s ON true;
+-- 正在重试的任务
+SELECT cafeteria_id, phase, attempts, next_retry_at, last_error FROM menu_import_jobs
+WHERE menu_date=(now() AT TIME ZONE 'Asia/Tokyo')::date AND next_retry_at IS NOT NULL;
+```
+
+**线上调度：** 尚未部署。需要在服务器上安装 Digdag（或用等价的每分钟 cron）运行 `importer/`，并建好上面的角色。
 
 ## 7. 常见问题
 

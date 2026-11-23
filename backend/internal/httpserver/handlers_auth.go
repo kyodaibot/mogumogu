@@ -22,7 +22,17 @@ type credentialsInput struct {
 	Password *string `json:"password"`
 }
 
+type registrationInput struct {
+	credentialsInput
+	Campus *string `json:"campus"`
+}
+
+func validateCampus(v *validator, value *string) string {
+	return v.oneOf("campus", value, "yoshida", "uji", "katsura")
+}
+
 type userJSON struct {
+	Campus    string `json:"campus"`
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`
 	Tier      string `json:"tier"`
@@ -36,7 +46,7 @@ type meJSON struct {
 }
 
 func toUserJSON(u store.User) userJSON {
-	return userJSON{ID: u.ID, Username: u.Username, Tier: string(u.Tier), CreatedAt: tz.FormatInstant(u.CreatedAt)}
+	return userJSON{Campus: u.Campus, ID: u.ID, Username: u.Username, Tier: string(u.Tier), CreatedAt: tz.FormatInstant(u.CreatedAt)}
 }
 
 func (a *api) getCSRF(c *gin.Context) {
@@ -60,11 +70,12 @@ func (a *api) register(c *gin.Context) {
 	}
 	a.registerLimiter.Add(ipKey)
 
-	var in credentialsInput
+	var in registrationInput
 	if !decodeJSON(c, &in) {
 		return
 	}
 	var v validator
+	campus := validateCampus(&v, in.Campus)
 	username := ""
 	if in.Username == nil {
 		v.add("username", "required")
@@ -90,7 +101,7 @@ func (a *api) register(c *gin.Context) {
 		abortInternal(c, a.logger, err)
 		return
 	}
-	user, err := a.store.CreateUser(c.Request.Context(), username, hash)
+	user, err := a.store.CreateUser(c.Request.Context(), username, hash, campus)
 	if errors.Is(err, store.ErrUsernameTaken) {
 		abortError(c, http.StatusConflict, "username_taken", "Username is already taken.")
 		return
@@ -198,6 +209,32 @@ func (a *api) logout(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (a *api) putCampus(c *gin.Context) {
+	sess, _ := sessionOf(c)
+	var in struct {
+		Campus *string `json:"campus"`
+	}
+	if !decodeJSON(c, &in) {
+		return
+	}
+	var v validator
+	campus := validateCampus(&v, in.Campus)
+	if v.failed() {
+		abortValidation(c, v.errs)
+		return
+	}
+	user, err := a.store.SetCampus(c.Request.Context(), sess.UserID, campus)
+	if errors.Is(err, store.ErrNotFound) {
+		abortError(c, http.StatusUnauthorized, "unauthenticated", "Authentication required.")
+		return
+	}
+	if err != nil {
+		abortInternal(c, a.logger, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"user": toUserJSON(user)})
 }
 
 func (a *api) me(c *gin.Context) {

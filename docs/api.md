@@ -195,6 +195,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 | POST | `/api/auth/login` | 否 | 登录 |
 | POST | `/api/auth/logout` | 是 | 退出 |
 | GET | `/api/auth/me` | 是 | 当前用户 |
+| PUT | `/api/auth/me/campus` | 是 | 修改所属校区 |
 | GET | `/api/profile` | 是 | 读取 Profile |
 | PUT | `/api/profile` | 是 | 创建或替换 Profile |
 | GET | `/api/schedule-events?from=&to=` | 是 | 按日期范围列出行程 |
@@ -231,19 +232,20 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 请求：
 
 ```json
-{ "username": "taro_01", "password": "correct horse battery" }
+{ "username": "taro_01", "password": "correct horse battery", "campus": "yoshida" }
 ```
 
 | 字段 | 规则 |
 |---|---|
 | `username` | 必填；3–32 个字符；只允许 `a-z`、`0-9`、`_`；大写字母会被转成小写后保存和比较（即不区分大小写） |
+| `campus` | 必填；`yoshida`、`uji` 或 `katsura` |
 | `password` | 必填；8–128 个字符；不去除首尾空白 |
 
 - 成功：`201`，设置 `mogumogu_session` Cookie（注册即登录），并按 2.4 重新签发绑定新会话的 CSRF 令牌（覆盖 `mogumogu_csrf` Cookie）。响应体为 `GET /api/auth/me` 的内容，外加 `csrf_token` 字段：
 
   ```json
   {
-    "user": { "id": 1, "username": "taro_01", "tier": "normal", "created_at": "2026-10-23T18:30:00+09:00" },
+    "user": { "id": 1, "username": "taro_01", "tier": "normal", "campus": "yoshida", "created_at": "2026-10-23T18:30:00+09:00" },
     "has_profile": false,
     "csrf_token": "v1.s.1792748400.Zm9v....c2ln..."
   }
@@ -253,7 +255,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
 ### 4.3 `POST /api/auth/login`
 
-请求体同注册。
+请求体包含 `username` 和 `password`。
 
 - 成功：`200`，设置 `mogumogu_session` Cookie，并重新签发绑定新会话的 CSRF 令牌；响应体与注册相同（包含 `csrf_token`）。
 - 用户名不存在或密码错误：`401 invalid_credentials`（不区分）。
@@ -271,6 +273,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
     "id": 1,
     "username": "taro_01",
     "tier": "normal",
+    "campus": "yoshida",
     "created_at": "2026-10-23T18:30:00+09:00"
   },
   "has_profile": false
@@ -281,6 +284,14 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
 `tier` 是账号等级，`normal` 或 `pro`。新注册的用户都是 `normal`，只能由管理员在服务器上修改（docs/operations.md 6.10），没有修改等级的 API。
 
+### 4.6 `PUT /api/auth/me/campus`
+
+```json
+{ "campus": "uji" }
+```
+
+修改账号的所属校区，允许值见 4.2。不需要先填写 Profile。成功 `200`，响应体为 `{ "user": … }`，`user` 同 4.5。值不合法时 `422 validation_failed`（`campus/invalid_value`）。
+
 ## 5. Profile
 
 每个用户最多一条 Profile。
@@ -289,6 +300,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
 | 字段 | 类型 | 规则 |
 |---|---|---|
+| `campus` | string | 账号所属校区，允许值见 4.2。PUT 时省略则保留原值。前端用 4.6 单独修改。 |
 | `height_cm` | number | 必填；50.0–300.0；最多 1 位小数 |
 | `weight_kg` | number | 必填；10.0–500.0；最多 1 位小数 |
 | `age` | integer | 必填；10–120 |
@@ -303,6 +315,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
   ```json
   {
+    "campus": "yoshida",
     "height_cm": 172.5,
     "weight_kg": 65.0,
     "age": 21,
@@ -317,7 +330,7 @@ signature = base64url( HMAC-SHA256( CSRF_SECRET,
 
 ### 5.3 `PUT /api/profile`
 
-请求体为 5.1 中除 `updated_at` 外的全部字段（`allergens` 省略视为 `null`）。不存在时创建，存在时整体替换。成功 `200`，响应体同 `GET`。
+请求体为 5.1 中除 `updated_at` 外的全部字段（`allergens` 省略视为 `null`，`campus` 可省略）。不存在时创建，存在时整体替换。成功 `200`，响应体同 `GET`。
 
 ## 6. 行程（schedule events）
 
@@ -452,7 +465,7 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 | `date` | 日期 | 必填；那一轮的目标日期 |
 | `message` | string | 必填；去空白后 1–500 个字符 |
 | `reply` | string | 必填；去空白后 1–1000 个字符 |
-| `recommendations` | array | 可选；0 个或 3 个（其他数量返回 `invalid_value`），每项只有 `name`（1–80 个字符）和 `description`（1–200 个字符） |
+| `recommendations` | array | 可选；0–3 个，每项只有 `name`（1–80 个字符）和 `description`（1–200 个字符） |
 | `changes` | array | 可选；那一轮变更提案的摘要，最多 10 项。每项有 `op`（`create`、`update` 或 `delete`）、`date`、`meal_type` 和 `content`（1–200 个字符）：新增和修改是修改后的记录，删除是被删的记录 |
 
 错误的 `field` 形如 `history[2].reply`、`history[0].recommendations[1].name`、`history[0].changes[0].op`。历史由前端提交，可能被修改，Go 只校验格式和长度，不校验内容（project-review.md 3.6）。
@@ -477,23 +490,13 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 }
 ```
 
-成功 `200`：
+成功 `200`。文字回复示例：
 
 ```json
 {
-  "reply": "午後に授業があるので、腹持ちのよい案を3つ挙げます：",
-  "meal_type": "lunch",
-  "recommendations": [
-    {
-      "name": "鶏むね肉弁当",
-      "description": "鶏むね肉と玄米",
-      "reason": "午後に3時間の授業がある",
-      "estimate": {
-        "serving": { "calories": 650, "protein_g": 35, "fat_g": 18, "carbs_g": 85 },
-        "per_100g": { "calories": 163, "protein_g": 9, "fat_g": 4, "carbs_g": 21 }
-      }
-    }
-  ],
+  "reply": "明日のメニューが更新されてから確認しますか？",
+  "meal_type": null,
+  "recommendations": [],
   "ask_meal_type": false,
   "proposal": null,
   "memory_updates": [],
@@ -501,14 +504,11 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 }
 ```
 
-- `reply`：必有的回复文字。
-- `recommendations`：空数组，或正好 3 个（示例为了简短只写了 1 个）。
-- `meal_type`：推荐针对的餐次（`breakfast`、`lunch`、`dinner` 或 `snack`），三个推荐属于同一餐；没有推荐时为 `null`。
-- `estimate`：营养估算（GLOSSARY），由饮食助手给出的大致数值，不是测量值，前端标明「目安」：
-  - `serving`：常见的一份的总量。热量取整到 10 kcal，三大营养素取整到 1 g。用户点击「添加到饮食记录」时，用这组数预填 `POST /api/meal-records` 的表单。
-  - `per_100g`：每 100 g 的含量，只作参考，不保存。热量和三大营养素都取整到 1。组合类推荐按整份混合后的平均值给出。
-  - AI 服务校验数值范围（与饮食记录相同；每 100 g 的热量 ≤ 900，三大营养素之和 ≤ 100 g）、热量与三大营养素是否大致相符，以及两组数推算出的份量是否在 30–2000 g 之间。
-- `ask_meal_type`：为 `true` 时表示饮食助手在问用户想问哪一餐，前端在回复下方显示三个餐次的预设问题；此时 `recommendations` 为空。
+- `reply` 为回复文字。食堂方案放在 `cafeteria_cards`（缺省表示无卡片），最多三张，`meal_type` 对应同一餐次。旧标签页中的 `recommendations` 继续按原估算卡展示。
+- 每张食堂卡包含 `kind="cafeteria"`、`name`、`reason`、`meal_type`、`menu_date`、`reference`、`breakfast_options` 和 `stores`。用户同意提前参考时，`reference` 为 true，`menu_date` 仍是实际菜单日期。
+- `stores[]` 含 `id`、`name`、`campus`、`hours`（可供应时段）、`hours_url`、`checked_at`、`items`、`nutrition` 和 `price_yen`。同一搭配只列能供应整套的门店。空时段列表表示营业安排待核实。
+- `items[]` 含 `code`、`name`、`portions`、`url`、`allergens`、`nutrition` 和 `price_yen`。价格单位日元；官网营养按每份给出 `calories`、`protein_g`、`fat_g`、`carbs_g`。缺值用 null；热量缺失的菜品不入库。`allergens` 为食堂官网的过敏原标记，每项是 `{ "ja": "卵", "en": "egg" }`，前端按界面语言显示；「〜由来」标记的 `en` 为 `derived from …`；null 表示标记未知，`[]` 表示官网未标任何项。门店合计按份数计算。早餐各款互为选项，门店合计为 null。
+- `ask_meal_type` 为 true 时，前端展示三个餐次按钮。
 - `proposal`：变更提案（GLOSSARY），只有 Pro 用户、且饮食助手暂存了修改时才有，否则为 `null`。见 9.4。
 
   ```json
@@ -562,7 +562,7 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 ### 9.2 调用额度
 
 - 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天的额度按账号等级：Normal 30 条，Pro 100 条；全站每天 300 条（线上 100 条）。都可通过环境变量调整（`ASSISTANT_NORMAL_DAILY_LIMIT`、`ASSISTANT_PRO_DAILY_LIMIT`、`ASSISTANT_SITE_DAILY_LIMIT`）。
-- 等级在每条消息时从数据库读取，修改后立即生效。同一天内改变等级时，已经用掉的条数照样计算。
+- 计数保存在 PostgreSQL。等级在每条消息时从数据库读取，修改后立即生效。同一天内改变等级时，已经用掉的条数照样计算。
 - 额度在调用 AI 服务前检查并占用；用完时返回 `429 quota_exceeded`，`Retry-After` 为到次日 0 点的秒数，不调用 AI 服务。先检查用户自己的额度：用完的是它时，错误中带 `limit`（这位用户每天的条数）；用完的是全站额度时不带 `limit`。
 
   ```json
@@ -579,6 +579,7 @@ Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手
 |---|---|---|
 | GET | `/internal/agent/meals?from=&to=` | 同 7.2，但最多 31 天 |
 | GET | `/internal/agent/events?from=&to=` | 同 6.2，但最多 31 天 |
+| GET | `/internal/agent/menu?date=&meal_type=&time=&campus=&cafeteria=&use_today=` | 食堂候选菜品（只在本条消息内有效）。`use_today=true` 用今天的菜单参考明天时，周末和平日规则按明天判断，今天的营业时间不套用，营业时段显示为待核实 |
 
 - 认证：`Authorization: Bearer <令牌>`。令牌由 Go 在每条消息开始时签发，随请求传给 AI 服务，只对这一个用户有效，60 秒后过期。签名密钥在 Go 启动时随机生成，只保存在内存中。令牌无效时返回 `401 unauthenticated`。
 - Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`Reply`）和 `backend/internal/assistant/client.go`。请求的上下文中带 `allow_proposal` 和 `allow_memory`（现在都是「用户是否为 Pro」）以及记忆列表 `memories`（`id`、`content`；不允许记忆时为空），回复中带暂存的修改 `changes` 和记忆的修改 `memory_changes`（`op`、`memory_id`、`content`）。AI 服务没有写入数据的接口。

@@ -64,7 +64,12 @@ export function historyOf(turns: SentTurn[]): HistoryTurn[] {
       date: turn.date,
       message: turn.text,
       reply: turn.reply!.reply,
-      recommendations: turn.reply!.recommendations.map(({ name, description }) => ({ name, description })),
+      recommendations: turn.reply!.cafeteria_cards?.length
+        ? turn.reply!.cafeteria_cards.map(card => ({
+            name: [...card.name].slice(0, 80).join(''),
+            description: [...card.stores.map(s => s.name).join(' / ')].slice(0, 200).join(''),
+          }))
+        : turn.reply!.recommendations.map(({ name, description }) => ({ name, description })),
       changes: turn.reply!.proposal ? summaryOf(turn.reply!.proposal) : [],
     }))
 }

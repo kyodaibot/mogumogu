@@ -4,11 +4,15 @@ import { createClient, readDocumentCookie, type RequestOptions } from './client'
 
 export { ApiError, type FieldError } from './client'
 
+export const CAMPUSES = ['yoshida', 'uji', 'katsura'] as const
+export type Campus = typeof CAMPUSES[number]
+
 export type Tier = 'normal' | 'pro'
 
 export interface User {
   id: number
   username: string
+  campus: Campus
   tier: Tier
   created_at: string
 }
@@ -22,6 +26,7 @@ export interface Me {
 export type Goal = 'build_muscle' | 'lose_fat'
 
 export interface ProfileInput {
+  campus?: Campus
   height_cm: number | null
   weight_kg: number | null
   age: number | null
@@ -32,6 +37,7 @@ export interface ProfileInput {
 }
 
 export interface Profile {
+  campus: Campus
   height_cm: number
   weight_kg: number
   age: number
@@ -95,7 +101,41 @@ export interface Recommendation {
   estimate: Estimate
 }
 
+export type MenuNutrition = Pick<MealRecordInput, 'calories' | 'protein_g' | 'fat_g' | 'carbs_g'>
+/** An official allergen label of the cafeteria, named in both interface languages. */
+export interface AllergenLabel { ja: string; en: string }
+export interface MenuItem {
+  code: string
+  name: string
+  portions: number
+  price_yen: number | null
+  url: string
+  /** null: the cafeteria's labels could not be read; []: none listed. */
+  allergens: AllergenLabel[] | null
+  nutrition: MenuNutrition
+}
+export interface CafeteriaCard {
+  kind: 'cafeteria'
+  name: string
+  reason: string
+  meal_type: MealType
+  menu_date: string
+  reference: boolean
+  breakfast_options: boolean
+  stores: {
+    id: string
+    name: string
+    campus: Campus
+    hours: string[]
+    hours_url: string
+    checked_at: string
+    items: MenuItem[]
+    nutrition: MenuNutrition | null
+    price_yen: number | null
+  }[]
+}
 export interface AssistantReply {
+  cafeteria_cards?: CafeteriaCard[]
   reply: string
   /** Empty, or exactly three. */
   recommendations: Recommendation[]
@@ -201,12 +241,13 @@ const req = client.request
 
 export const api = {
   me: (opts?: RequestOptions) => req<Me>('GET', '/api/auth/me', undefined, opts),
-  register: (username: string, password: string) => req<Me>('POST', '/api/auth/register', { username, password }),
+  register: (username: string, password: string, campus: Campus | null) => req<Me>('POST', '/api/auth/register', { username, password, campus }),
   login: (username: string, password: string) => req<Me>('POST', '/api/auth/login', { username, password }),
   logout: () => req<void>('POST', '/api/auth/logout'),
 
   getProfile: () => req<Profile>('GET', '/api/profile'),
   putProfile: (p: ProfileInput) => req<Profile>('PUT', '/api/profile', p),
+  putCampus: (campus: Campus) => req<{ user: User }>('PUT', '/api/auth/me/campus', { campus }),
 
   listEvents: (from: string, to: string) =>
     req<{ items: ScheduleEvent[] }>('GET', `/api/schedule-events?from=${from}&to=${to}`).then((r) => r.items),
