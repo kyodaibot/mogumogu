@@ -9,22 +9,32 @@ import MealForm from './MealForm.vue'
 
 const props = defineProps<{ card: CafeteriaCard; added: boolean }>()
 const emit = defineEmits<{ saved: [] }>()
-const storeIndex = ref(0)
-const store = computed(() => props.card.stores[storeIndex.value]!)
+const store = computed(() => props.card.stores[0]!)
 const variant = ref('')
 const portions = ref<Record<string, number>>({})
+const riceChoice = ref<Record<string, string>>({})
 const editing = ref(false)
 watch(store, (s) => {
   variant.value = s.items[0]?.code ?? ''
+  riceChoice.value = Object.fromEntries(s.items.filter(i => i.rice_options?.length).map(i => [i.code, i.code]))
   portions.value = Object.fromEntries(s.items.map(item => [item.code, item.portions]))
   editing.value = false
 }, { immediate: true })
 
 const visibleItems = computed(() => store.value.items.filter(item => !props.card.breakfast_options || item.code === variant.value))
-const draft = computed(() => mealFromMenu(props.card.menu_date, props.card.meal_type, visibleItems.value, portions.value))
+// Keep quantity controls keyed by the original recommendation even when the rice SKU changes.
+const selectedItems = computed(() => visibleItems.value.flatMap(item => {
+  if (!item.rice_options?.length) return [item]
+  const selected = item.rice_options.find(option => option.code === riceChoice.value[item.code])
+  return selected ? [{ ...selected, code: item.code }] : []
+}))
+const title = computed(() => store.value.items.some(i => i.rice_options?.length)
+  ? selectedItems.value.map(i => i.name).join(' + ') || props.card.name
+  : props.card.name)
+const draft = computed(() => mealFromMenu(props.card.menu_date, props.card.meal_type, selectedItems.value, portions.value))
 const price = computed(() => {
   let total = 0
-  for (const item of visibleItems.value) {
+  for (const item of selectedItems.value) {
     const n = portions.value[item.code]
     if (!n) continue
     if (item.price_yen == null) return null
@@ -32,15 +42,7 @@ const price = computed(() => {
   }
   return total
 })
-const checked = computed(() => new Intl.DateTimeFormat(locale.value, {
-  timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-}).format(new Date(store.value.checked_at)))
-const sources = computed(() => sourceLinks(visibleItems.value.map(i => ({ title: i.name, url: i.url }))))
-// A store without the day's own menu shows its latest recent one (plans/simplify-hours.md).
-const shortDate = (iso: string) => iso.split('-').slice(1).map(Number).join('/')
-const earlier = computed(() => store.value.menu_date === props.card.menu_date
-  ? null
-  : t.value.menu.earlier(shortDate(store.value.menu_date), shortDate(props.card.menu_date)))
+const sources = computed(() => sourceLinks(selectedItems.value.map(i => ({ title: i.name, url: i.url }))))
 const hoursLink = computed(() => sourceLinks([{ title: t.value.menu.hoursLink, url: store.value.hours_url }])[0])
 function saved() {
   editing.value = false
@@ -49,24 +51,17 @@ function saved() {
 </script>
 
 <template>
-  <h3>{{ card.name }}</h3>
+  <h3>{{ title }}</h3>
   <p class="reason">{{ card.reason }}</p>
 
-  <fieldset :disabled="editing || added" class="shops">
-    <legend>{{ t.menu.store }}</legend>
-    <label v-for="(s, index) in card.stores" :key="s.id">
-      <input v-if="card.stores.length > 1" v-model="storeIndex" type="radio" :value="index" />
-      {{ s.name }}
-      <span class="campus" :class="s.campus">{{ t.campus[s.campus] }}</span>
-    </label>
-  </fieldset>
-  <p>{{ t.menu.menuDate }} · {{ store.menu_date }}</p>
-  <p v-if="earlier" class="banner info">{{ earlier }}</p>
-  <p>
-    <template v-if="store.hours?.length">{{ t.menu.regularHours }} {{ store.hours.join(' / ') }}</template>
-    <a v-if="hoursLink" :href="hoursLink.href" target="_blank" rel="noopener noreferrer">{{ hoursLink.label }}</a>
+  <p class="store">
+    {{ store.name }}
+    <span class="campus" :class="store.campus">{{ t.campus[store.campus] }}</span>
   </p>
-  <p>{{ t.menu.checked }} · {{ checked }}</p>
+  <p v-if="store.hours?.length || hoursLink">
+    <template v-if="store.hours?.length">{{ t.menu.regularHours }} {{ store.hours.join(' / ') }}</template>
+    <a v-if="hoursLink" :href="hoursLink.href" target="_blank" rel="noopener noreferrer">{{ locale === 'ja' ? '（' + hoursLink.label + '）' : '(' + hoursLink.label + ')' }}</a>
+  </p>
 
   <label v-if="card.breakfast_options">
     {{ t.menu.variant }}
@@ -77,8 +72,15 @@ function saved() {
 
   <ul class="dishes">
     <li v-for="item in visibleItems" :key="item.code">
-      <strong>{{ item.name }}</strong>
-      <label>
+      <strong>{{ item.rice_options?.length ? t.menu.rice : item.name }}</strong>
+      <label v-if="item.rice_options?.length" class="rice-size">
+        {{ t.menu.size }}
+        <select v-model="riceChoice[item.code]" :disabled="editing || added">
+          <option value="">{{ t.menu.noRice }}</option>
+          <option v-for="option in item.rice_options" :key="option.code" :value="option.code">{{ t.menu.riceSizes[option.size] }}</option>
+        </select>
+      </label>
+      <label v-else>
         {{ t.menu.portions }}
         <input v-model.number="portions[item.code]" :disabled="editing || added" type="number" inputmode="numeric" min="0" :max="MAX_PORTIONS" step="1"
           @change="portions[item.code] = clampPortions(portions[item.code])" />
@@ -103,16 +105,17 @@ function saved() {
 
 <style scoped>
 p, h3 { margin: 0 0 .5rem; }
-.shops { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
-.shops label { display: inline-flex; align-items: center; gap: .25rem; }
-.campus { padding: .05rem .5rem; white-space: nowrap; border: 1.5px solid var(--tag); border-radius: 6px; background: var(--tag-soft); color: var(--ink); font-size: var(--fs-small); }
-.campus.yoshida { --tag: var(--campus-yoshida); --tag-soft: var(--campus-yoshida-soft); }
-.campus.katsura { --tag: var(--campus-katsura); --tag-soft: var(--campus-katsura-soft); }
-.campus.uji { --tag: var(--campus-uji); --tag-soft: var(--campus-uji-soft); }
+.store { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.campus { padding: .1em .55em; border-radius: 1em; font-size: var(--fs-small); white-space: nowrap; }
+.campus.yoshida { background: var(--campus-yoshida); color: #302400; }
+.campus.katsura { background: #e3f1de; color: #284923; }
+.campus.uji { background: #fbe5ea; color: #643048; }
 .dishes { list-style: none; padding: 0; }
 .dishes li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .25rem; margin-block: .4rem; }
 .dishes small { grid-column: 1 / -1; color: var(--ink-soft); }
 .dishes input { width: 3.5rem; }
+.rice-size { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--fs-small); }
+.rice-size select { width: auto; min-height: 2rem; padding: .125rem .35rem; }
 .totals { padding: .6rem; background: var(--surface); border-radius: var(--radius-control); }
 dl, .sources { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .4rem 0; }
 dt { font-size: .8rem; color: var(--ink-soft); }

@@ -156,7 +156,7 @@ async def test_staged_changes_come_back_with_the_reply():
     assert outcome.error is None
     assert [c["op"] for c in outcome.changes] == ["create", "delete"]
     assert [t.name for t in model_tools(model)] == [
-        "get_meals", "get_events", "create_meal", "update_meal", "delete_meal", "submit_reply",
+        "get_meals", "get_events", "plot_nutrition", "create_meal", "update_meal", "delete_meal", "submit_reply",
     ]
 
 
@@ -168,7 +168,7 @@ async def test_staging_tools_are_offered_only_when_allowed():
     outcome, model = await run([reply(done("Pro の機能です。"))], allow_proposal=False)
 
     assert outcome.changes == []
-    assert [t.name for t in model_tools(model)] == ["get_meals", "get_events", "submit_reply"]
+    assert [t.name for t in model_tools(model)] == ["get_meals", "get_events", "plot_nutrition", "submit_reply"]
 
 
 async def test_staging_without_permission_is_not_run():

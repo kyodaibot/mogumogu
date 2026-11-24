@@ -122,7 +122,17 @@ type MenuPortion struct {
 	Portions int    `json:"portions"`
 }
 
+type NutritionDay struct {
+	Date     string   `json:"date"`
+	Meals    int      `json:"meals"`
+	Calories *float64 `json:"calories"`
+	ProteinG *float64 `json:"protein_g"`
+	FatG     *float64 `json:"fat_g"`
+	CarbsG   *float64 `json:"carbs_g"`
+}
+
 type Reply struct {
+	NutritionChart  []NutritionDay   `json:"nutrition_chart,omitempty"`
 	MenuQueryID     string           `json:"menu_query_id,omitempty"`
 	MenuSelections  []MenuSelection  `json:"menu_selections,omitempty"`
 	Reply           string           `json:"reply"`

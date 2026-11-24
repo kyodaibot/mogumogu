@@ -559,6 +559,8 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 
 错误：`401`、`403`、`413`（超过 128 KB）、`422`（`date`、`message`、`locale` 或 `history` 不合规则）、`429 rate_limited`（每分钟限流）、`429 quota_exceeded`（调用额度用完）、`503 ai_unavailable`。
 
+回顾饮食记录时，助手可调用 `plot_nutrition(from_date, to_date)`。日期含首尾，与餐次查询共享每条消息 31 天的额度。响应的可选字段 `nutrition_chart` 按日期升序包含每天的 `date`、记录条数 `meals` 和四个合计值 `calories`、`protein_g`、`fat_g`、`carbs_g`。当天没有餐次，或任一餐缺少该项数值时，对应合计为 `null`。
+
 ### 9.2 调用额度
 
 - 每条消息（包括预设问题）计 1 次，按 Asia/Tokyo 的自然日计算。每位用户每天的额度按账号等级：Normal 30 条，Pro 100 条；全站每天 300 条（线上 100 条）。都可通过环境变量调整（`ASSISTANT_NORMAL_DAILY_LIMIT`、`ASSISTANT_PRO_DAILY_LIMIT`、`ASSISTANT_SITE_DAILY_LIMIT`）。

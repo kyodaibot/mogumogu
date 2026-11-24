@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .cafeteria import GET_MENU, MenuSource
 from .model import ToolSpec
-from .schemas import Meal, MealType, Memory, MenuSubmitReply, ServingNutrition, SubmitReply
+from .schemas import Meal, MealType, Memory, NutritionDay, MenuSubmitReply, ServingNutrition, SubmitReply
 from .search import SearchProvider
 
 MAX_SPAN_DAYS = 31
@@ -144,7 +144,11 @@ REMEMBER = ToolSpec("remember", "Save a new memory: a lasting preference or fact
 UPDATE_MEMORY = ToolSpec("update_memory", "Replace the text of one memory." + _SAVED, UpdateMemoryArgs)
 FORGET = ToolSpec("forget", "Delete one memory." + _SAVED, ForgetArgs)
 
-QUERY_TOOLS = (GET_MEALS, GET_EVENTS)
+PLOT_NUTRITION = ToolSpec(
+    "plot_nutrition", "Display daily recorded calories, protein, fat and carbs as line charts for this inclusive date range.",
+    DateRangeArgs,
+)
+QUERY_TOOLS = (GET_MEALS, GET_EVENTS, PLOT_NUTRITION)
 STAGING_TOOLS = (CREATE_MEAL, UPDATE_MEAL, DELETE_MEAL)
 MEMORY_TOOLS = (REMEMBER, UPDATE_MEMORY, FORGET)
 
@@ -202,6 +206,7 @@ class QueryBudget:
     """
 
     def __init__(self):
+        self.nutrition_chart: list[NutritionDay] = []
         self.days: dict[str, set[date]] = {}
 
     def take(self, kind: str, start: date, end: date) -> bool:
@@ -211,6 +216,22 @@ class QueryBudget:
             return False
         seen |= wanted
         return True
+
+
+def daily_nutrition(items: list[dict], start: date, end: date) -> list[NutritionDay]:
+    by_date: dict[str, list[dict]] = {}
+    for meal in items:
+        by_date.setdefault(meal["date"], []).append(meal)
+    days = []
+    for offset in range((end - start).days + 1):
+        day = start + timedelta(days=offset)
+        meals = by_date.get(day.isoformat(), [])
+        totals = {}
+        for key in ("calories", "protein_g", "fat_g", "carbs_g"):
+            values = [m.get(key) for m in meals]
+            totals[key] = round(sum(values), 1) if values and None not in values else None
+        days.append(NutritionDay(date=day, meals=len(meals), **totals))
+    return days
 
 
 async def run_query(
@@ -232,13 +253,18 @@ async def run_query(
     if (end - start).days + 1 > MAX_SPAN_DAYS:
         return f"Invalid arguments: one query covers at most {MAX_SPAN_DAYS} days"
 
-    kind = "meals" if name == GET_MEALS.name else "events"
+    kind = "events" if name == GET_EVENTS.name else "meals"
     if not budget.take(kind, start, end):
         return (
             f"Invalid arguments: one message may read at most {MAX_SPAN_DAYS} days of records in total. "
             f"Answer from the latest {MAX_SPAN_DAYS} days only, and mention this limit"
         )
     items = await source.fetch(kind, start, end)
+    if name == PLOT_NUTRITION.name:
+        budget.nutrition_chart = daily_nutrition(items, start, end)
+        return json.dumps({"chart_ready": True, "daily_totals": [
+            day.model_dump(mode="json") for day in budget.nutrition_chart
+        ]}, separators=(",", ":"))
     drop = _DROP if kind == "meals" else _DROP | {"id"}
     rows = [{k: v for k, v in item.items() if k not in drop} for item in items]
     if kind == "meals" and seen_meals is not None:

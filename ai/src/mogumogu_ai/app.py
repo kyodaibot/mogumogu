@@ -146,7 +146,7 @@ async def reply(req: ReplyRequest, request: Request):
     )
     return Reply.model_construct(
         **{**dict(outcome.result), "sources": [Source(**src) for src in outcome.sources]},
-        changes=outcome.changes, memory_changes=outcome.memory_changes,
+        nutrition_chart=outcome.nutrition_chart, changes=outcome.changes, memory_changes=outcome.memory_changes,
     )
 
 

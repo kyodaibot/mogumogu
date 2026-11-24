@@ -340,6 +340,15 @@ class Source(BaseModel):
     url: str
 
 
+class NutritionDay(BaseModel):
+    date: date
+    meals: int
+    calories: float | None
+    protein_g: float | None
+    fat_g: float | None
+    carbs_g: float | None
+
+
 class Reply(SubmitReply):
     """Body of the response to Go: the reply, the changes staged with it
     (tools.Staging), which Go checks and saves as a proposal, and the changes
@@ -347,5 +356,6 @@ class Reply(SubmitReply):
     sources gets each URL's title here (the model gives only URLs)."""
 
     sources: list[Source] = Field(default_factory=list)  # type: ignore[assignment]
+    nutrition_chart: list[NutritionDay] = Field(default_factory=list)
     changes: list[dict] = Field(default_factory=list)
     memory_changes: list[dict] = Field(default_factory=list)
