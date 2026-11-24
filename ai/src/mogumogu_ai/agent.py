@@ -306,14 +306,19 @@ def build_graph(
         finish = state["finish"] or "submitted"
         last = state["messages"][-1]
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
-        checked = check_reply(submit["args"], allergens, searches.found) if submit else "submit_reply was not called"
+        args = menus.fix_query_id(submit["args"]) if submit and menus else submit and submit["args"]
+        checked = check_reply(args, allergens, searches.found) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
             if menus:
-                checked = menus.check(checked) or checked
+                checked = menus.prune_stores(menus.merge_breakfast(checked))
+                checked = menus.check(checked) or menus.disclose(checked)
             elif checked.menu_selections:
                 checked = "The cafeteria menu is unavailable for this request."
         if isinstance(checked, SubmitReply):
             return {"result": checked.rounded(), "finish": finish}
+        # Which check failed; the allergen check names the user's allergen, so only its kind is logged.
+        log.info("validation failed%s: %s", " again" if state["retried"] else "",
+                 "allergen in a recommendation" if checked.startswith("Recommendation \"") else checked[:300])
         if state["retried"]:
             return {"error": "invalid_output", "finish": finish}
         if time.timeout_for("final") is None:
@@ -367,7 +372,7 @@ async def run_agent(
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
     searches = SearchBudget()
     search = search if req.context.allow_search else None
-    menus = MenuQueries(req.context.target_date) if req.context.campus else None
+    menus = MenuQueries(req.context.target_date, req.context.locale) if req.context.campus else None
     graph = build_graph(model, source, allergens, time, counts, staging, memories, search, searches, menus)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],

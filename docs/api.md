@@ -505,8 +505,8 @@ GET /api/meal-records?from=2026-09-28&to=2026-11-08
 ```
 
 - `reply` 为回复文字。食堂方案放在 `cafeteria_cards`（缺省表示无卡片），最多三张，`meal_type` 对应同一餐次。旧标签页中的 `recommendations` 继续按原估算卡展示。
-- 每张食堂卡包含 `kind="cafeteria"`、`name`、`reason`、`meal_type`、`menu_date`、`reference`、`breakfast_options` 和 `stores`。用户同意提前参考时，`reference` 为 true，`menu_date` 仍是实际菜单日期。
-- `stores[]` 含 `id`、`name`、`campus`、`hours`（可供应时段）、`hours_url`、`checked_at`、`items`、`nutrition` 和 `price_yen`。同一搭配只列能供应整套的门店。空时段列表表示营业安排待核实。
+- 每张食堂卡包含 `kind="cafeteria"`、`name`、`reason`、`meal_type`、`menu_date`、`breakfast_options` 和 `stores`。`menu_date` 是就餐日（所问的那天）；从卡片记录饮食时记到这一天。
+- `stores[]` 含 `id`、`name`、`campus`、`menu_date`、`hours`（按就餐日的星期，由代码中固定的营业时间表算出的供应时段，不反映祝日、长假和当天的实际营业状况，见 `plans/fixed-hours.md`）、`hours_url`、`checked_at`、`items`、`nutrition` 和 `price_yen`。同一搭配只列能供应整套的门店。空时段列表表示表中没有这家店，前端只显示官网链接。门店的 `menu_date` 与卡片的 `menu_date` 不同时，就餐日的菜单还没导入，用的是最近的菜单，前端显示提示「11/24 のメニューです。11/25 のメニューはまだ更新されていません。」。
 - `items[]` 含 `code`、`name`、`portions`、`url`、`allergens`、`nutrition` 和 `price_yen`。价格单位日元；官网营养按每份给出 `calories`、`protein_g`、`fat_g`、`carbs_g`。缺值用 null；热量缺失的菜品不入库。`allergens` 为食堂官网的过敏原标记，每项是 `{ "ja": "卵", "en": "egg" }`，前端按界面语言显示；「〜由来」标记的 `en` 为 `derived from …`；null 表示标记未知，`[]` 表示官网未标任何项。门店合计按份数计算。早餐各款互为选项，门店合计为 null。
 - `ask_meal_type` 为 true 时，前端展示三个餐次按钮。
 - `proposal`：变更提案（GLOSSARY），只有 Pro 用户、且饮食助手暂存了修改时才有，否则为 `null`。见 9.4。
@@ -579,7 +579,7 @@ Go 在单独的内部端口（`INTERNAL_PORT`，默认 8081）提供饮食助手
 |---|---|---|
 | GET | `/internal/agent/meals?from=&to=` | 同 7.2，但最多 31 天 |
 | GET | `/internal/agent/events?from=&to=` | 同 6.2，但最多 31 天 |
-| GET | `/internal/agent/menu?date=&meal_type=&time=&campus=&cafeteria=&use_today=` | 食堂候选菜品（只在本条消息内有效）。`use_today=true` 用今天的菜单参考明天时，周末和平日规则按明天判断，今天的营业时间不套用，营业时段显示为待核实 |
+| GET | `/internal/agent/menu?date=&meal_type=&campus=&cafeteria=` | 食堂候选菜品（只在本条消息内有效）。`date` 是就餐日，可以和日历选中的日期不同。过去的日子只用当天的菜单；今天及以后，用当天的菜单，没有时每家店用今天及之前 3 天内最新的一份（`stores[].menu_date` 为实际菜单日期，较新的排在前面）。星期、节假日和常规营业时间按就餐日判断；常规营业时间表示这天不营业这一餐的店不列出（`plans/simplify-hours.md`） |
 
 - 认证：`Authorization: Bearer <令牌>`。令牌由 Go 在每条消息开始时签发，随请求传给 AI 服务，只对这一个用户有效，60 秒后过期。签名密钥在 Go 启动时随机生成，只保存在内存中。令牌无效时返回 `401 unauthenticated`。
 - Go 发给 AI 服务的请求和回复格式见 `ai/src/mogumogu_ai/schemas.py`（`ReplyRequest`、`Reply`）和 `backend/internal/assistant/client.go`。请求的上下文中带 `allow_proposal` 和 `allow_memory`（现在都是「用户是否为 Pro」）以及记忆列表 `memories`（`id`、`content`；不允许记忆时为空），回复中带暂存的修改 `changes` 和记忆的修改 `memory_changes`（`op`、`memory_id`、`content`）。AI 服务没有写入数据的接口。

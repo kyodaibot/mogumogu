@@ -1,6 +1,6 @@
 """A few end-to-end checks against the real model (`make ai-eval`).
 
-Each case runs the full agent with Bedrock and fixed test data (no Go, no
+Each case runs the full agent with the Claude API and fixed test data (no Go, no
 database), then checks what can be checked mechanically. The reply texts are
 printed so a person can judge the rest. Costs a few cents per run.
 
@@ -24,18 +24,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mogumogu_ai.agent import Outcome, run_agent
-from mogumogu_ai.app import DEFAULT_MODEL_ID
-from mogumogu_ai.bedrock import BedrockModel
 from mogumogu_ai.schemas import ReplyRequest
 from mogumogu_ai.search import FakeSearch, SearchProvider, SearchResult, TavilySearch
 from mogumogu_ai.tracing import make_langfuse, trace_config
+
+from claude_api import ClaudeModel  # evals/, next to this script
 
 
 class Source:
     """Fixed records for the query tools; remembers the ranges asked for."""
 
-    def __init__(self, meals: list[dict], campus="yoshida"):
+    def __init__(self, meals: list[dict], campus="yoshida", stale: str | None = None):
         self.campus = campus
+        self.stale = stale  # every store's menu is from this earlier date
         self.meals = meals
         self.calls: list[tuple] = []
         self.queries: list[str] = []  # web searches
@@ -44,10 +45,12 @@ class Source:
     async def fetch_menu(self, params):
         """A small, dated menu for semantic selection evals. Go filters production snapshots."""
         self.menu_calls.append(params)
-        data = {"query_id": f"query-{len(self.menu_calls)}", "status": "ready", "menu_date": "2026-10-27",
+        # Like Go: the query's menu_date is the day eaten; only 10/27's menu is imported,
+        # and later days fall back to it.
+        data = {"query_id": f"query-{len(self.menu_calls)}", "status": "ready", "menu_date": params["date"],
                 "stores": [], "unavailable": []}
-        if params["date"] != data["menu_date"] and params.get("use_today") != "true":
-            return {**data, "status": "await_update"}
+        if params["date"] < "2026-10-27":
+            return {**data, "status": "no_snapshot"}
         if params.get("campus", self.campus) not in ("yoshida", "all"):
             return {**data, "status": "no_candidates"}
         english = {"卵": "egg", "大豆": "soybean", "さば": "mackerel", "小麦": "wheat"}
@@ -64,7 +67,7 @@ class Source:
             stores = [("650111", "中央食堂", [common, dish("meat", "本日の丼", ["卵", "小麦"])]),
                       ("650113", "北部食堂", [common, dish("beans", "豆腐", ["大豆"])])]
         data["stores"] = [
-            {"id": shop, "name": name, "campus": "yoshida", "items": items,
+            {"id": shop, "name": name, "campus": "yoshida", "menu_date": self.stale or "2026-10-27", "items": items,
              "hours": ["08:00–10:00" if params["meal_type"] == "breakfast" else "11:00–14:00"],
              "checked_at": "2026-10-27T08:04:00+09:00"}
             for shop, name, items in stores if params.get("cafeteria") in (None, shop, name)
@@ -383,7 +386,7 @@ def private_queries(o: Outcome, s: Source) -> str | None:
     return f"搜索关键词中有个人信息：{leaked}" if leaked else None
 
 
-def menu_choice(ids: set[str], stores: set[str], use_today=False):
+def menu_choice(ids: set[str], stores: set[str], day="2026-10-27"):
     def check(o: Outcome, source: Source) -> str | None:
         if not source.menu_calls or source.queries:
             return "应使用导入的菜单"
@@ -392,16 +395,25 @@ def menu_choice(ids: set[str], stores: set[str], use_today=False):
         selection = o.result.menu_selections[0]
         if {item.id for item in selection.items} != ids or set(selection.store_ids) != stores:
             return f"菜品或适用食堂不符：{selection}"
-        if (source.menu_calls[-1].get("use_today") == "true") != use_today:
-            return "是否引用今天菜单与授权不符"
+        if source.menu_calls[-1]["date"] != day:
+            return f"查询日期应为 {day}：{source.menu_calls[-1]['date']}"
         return None
     return check
 
 
-def no_reference(o: Outcome, source: Source) -> str | None:
-    return text_only(o, source) or ("未经允许使用了今天的菜单" if any(
-        call.get("use_today") == "true" for call in source.menu_calls
-    ) else None)
+def discloses_stale_menu(o: Outcome, source: Source) -> str | None:
+    if not o.result.menu_selections:
+        return "有最近的菜单时应照常给出卡片"
+    return None if "26" in o.result.reply else "回复中应说明是 10/26 的菜单"
+
+
+def tomorrow_from_today(o: Outcome, source: Source) -> str | None:
+    """Calendar on 10/27, asked about 明日: query 10/28, answer from 10/27's menu and say so."""
+    if not source.menu_calls or source.menu_calls[-1]["date"] != "2026-10-28":
+        return "「明日」应按提问时刻换算为 10/28"
+    if not o.result.menu_selections:
+        return "应直接用今天的菜单回答"
+    return None if "27" in o.result.reply else "回复中应说明是 10/27 的菜单"
 
 
 def no_cross_campus(o: Outcome, source: Source) -> str | None:
@@ -420,10 +432,11 @@ CASES = [
          pro=True, memories=[{"id": 5, "content": "大豆製品は避けたい"}]), Source([]),
          menu_choice({"fish"}, {"650111", "650113"}), search="fake"),
     Case("宇治无选项先询问", request("今日は宇治キャンパスで昼食を食べたい。", campus="uji"), Source([], campus="uji"), no_cross_campus),
-    Case("明天先询问", request("明日の朝食は何がある？", campus="yoshida", target="2026-10-28"),
-         Source([]), no_reference),
-    Case("明确要求以今天为参考", request("明日の朝食はまだ未定でも、今日の中央食堂のメニューを参考に選んで。",
-         target="2026-10-28", campus="yoshida"), Source([]), menu_choice({"egg-plate", "soy-plate"}, {"650111"}, True)),
+    Case("日历在今天、问明天", request("明日の朝食は何を食べたらいい？", campus="yoshida"), Source([]), tomorrow_from_today),
+    Case("日历在明天、指定中央早餐", request("明日の朝、中央食堂で何が食べられる？", target="2026-10-28", campus="yoshida"),
+         Source([]), menu_choice({"egg-plate", "soy-plate"}, {"650111"}, "2026-10-28")),
+    Case("今天未导入时说明旧菜单日期", request("今日の昼食は何を食べたらいい？", campus="yoshida"),
+         Source([], stale="2026-10-26"), discloses_stale_menu),
     # Older clients without a campus keep their original estimate-only wire format.
     Case("有过敏原", request("今日の昼食は何を食べたらいい？", allergens=["えび", "ピーナッツ"]), Source([]), no_allergens),
     # Now is 11:30, so the next meal is lunch.
@@ -504,7 +517,7 @@ def start_langfuse():
 
 
 async def main() -> int:
-    model = BedrockModel(os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID), os.environ.get("AWS_REGION", "ap-northeast-1"))
+    model = ClaudeModel()
     failed = 0
     forced = 0  # replies not submitted by the model on its own (finish is not "submitted")
     tokens = {False: [], True: []}  # without / with history: (input, output, cache read, cache write) per case

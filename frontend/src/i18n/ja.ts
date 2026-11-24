@@ -27,11 +27,11 @@ export const ja: Messages = {
   },
   menu: {
     store: '食堂',
-    unknownHours: '営業時間未確認',
+    regularHours: '通常の営業時間',
     hoursLink: '公式の営業時間',
     menuDate: 'メニューの日付',
     checked: '最終確認（日本時間）',
-    reference: '参考メニューです。選択した日の提供は未確認です。',
+    earlier: (menu: string, day: string) => `${menu} のメニューです。${day} のメニューはまだ更新されていません。`,
     variant: '朝食プレートの種類',
     portions: '食数',
     nutrition: '公式の栄養表示',

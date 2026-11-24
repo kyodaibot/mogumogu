@@ -24,7 +24,7 @@ COPY --from=java /opt/java/openjdk /opt/java/openjdk
 ADD --chmod=644 --checksum=sha256:4d1337d777bd334c2348e07ebc1795283aa50a2fd3b7d720cba5ee33b5486aa8 \
     https://github.com/treasure-data/digdag/releases/download/v0.10.5.1/digdag-0.10.5.1.jar /opt/digdag.jar
 COPY --from=build /app/.venv /app/.venv
-COPY importer/jobs.py importer/sources.py importer/menu_listing.py importer/hours_notices.json importer/menus.dig /app/
+COPY importer/jobs.py importer/sources.py importer/menu_listing.py importer/menus.dig /app/
 # Digdag keeps its working files in the project directory.
 RUN chown app /app
 ENV PATH=/app/.venv/bin:/opt/java/openjdk/bin:$PATH PYTHONUNBUFFERED=1 TZ=Asia/Tokyo

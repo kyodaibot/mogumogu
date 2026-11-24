@@ -39,3 +39,7 @@ CLAUDE.local.md
 .mcp.json
 
 docs/diagram/
+
+# Local cafeteria quality evaluation runs
+/ai/evals/results/
+/.deepeval/

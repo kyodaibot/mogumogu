@@ -143,7 +143,7 @@ This starts the database, applies pending migrations, then runs the backend, the
 | `make backend` | Build and run the backend only (foreground, :8080) |
 | `make frontend` | Frontend dev server only (foreground, :5173) |
 | `make ai` | AI service only (foreground, 127.0.0.1:8090) |
-| `make ai-eval` | Run the assistant's evaluation cases against the real model (a few cents per run) |
+| `make ai-eval` | Run the assistant's evaluation cases using the Claude API and local test data |
 | `make admin ARGS="users"` | List local users and their tiers; `ARGS="tier <username> <normal\|pro>"` changes a tier (docs/operations.md 6.10) |
 | `make migrate-up` | Apply all pending migrations |
 | `make migrate-down` | Roll back the latest migration (one step) |
@@ -245,6 +245,19 @@ make test-e2e           # browser end-to-end test, see below
 - **End-to-end test** (`make test-e2e`, in `e2e/`): headless Chrome with a Japanese browser language goes through the whole flow: sign-up, profile, calendar create/edit/delete, data after a reload, logout and login again. It also checks CSRF token rotation, the Origin header, and the assistant (preset questions give 3 cards, a new date adds a divider and keeps earlier messages, each message carries its own date and language, a follow-up is answered from the history, the conversation survives a reload and a visit to the Profile page and is sent as history afterwards, "New chat" clears it, logging out ends it), that the tier next to the username changes from Normal to Pro after `cmd/admin`, and, for Pro, a meal recorded through a proposal card plus a memory saved and undone from the same message, and memories added and edited on the Profile page. Finally it switches to English and checks that the interface and the assistant follow, and that the choice survives a reload.
   - The test **creates and removes its own data**: a throwaway database `mogumogu_e2e_*` on the compose PostgreSQL, with the backend, the AI service (fake model, no AWS) and Vite on their own ports (18080 plus internal 18081, 18090, 15173). Whether it passes, fails or is interrupted with Ctrl+C, the processes are stopped and the database dropped. Development data is never read or changed, and a running `make dev` is not disturbed.
   - Needs Google Chrome or Chromium (found automatically on macOS; elsewhere set `CHROME=/path/to/chrome`), Node 24 or later and uv. No extra npm packages.
+
+### Cafeteria quality baseline
+
+`make quality-eval` sends the Japanese questions in [tests.md](tests.md) through the Go chat endpoint and grades the replies and cards with DeepEval G-Eval. It needs the local PostgreSQL server, the PostgreSQL client tools and `ANTHROPIC_API_KEY` (in `.env` or your shell); like `make ai-eval`, it calls the Claude API directly, not Bedrock. Each run uses a throwaway database with the [menu fixture](ai/evals/cafeteria_menu.sql), a fresh Normal account on the Yoshida campus, and the clock fixed at 2026-11-24 14:23 JST.
+
+```sh
+make quality-eval                                   # all cases; or CASES="KYO-006 KYO-017"
+python3 ai/evals/quality.py --compare OLD.json NEW.json
+python3 ai/evals/quality.py --report REPORT.json    # rebuild the Markdown, no model calls
+uv run --env-file .env --locked --script ai/evals/quality.py --retry-judges REPORT.json
+```
+
+Reports (Markdown plus the evidence JSON) go to `ai/evals/results/` and count assistant errors, quality failures and judge errors separately. Defaults: assistant Claude Haiku 4.5, judge Claude Sonnet 4.6, passing score 0.7; override with `EVAL_ASSISTANT_MODEL` / `EVAL_JUDGE_MODEL`. `--compare` refuses reports with a different test set, fixture, clock or judge settings. CI runs only the offline tests of the runner.
 
 ### CI/CD
 

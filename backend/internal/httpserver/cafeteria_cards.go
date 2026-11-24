@@ -34,6 +34,7 @@ type candidateStore struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Campus    string          `json:"campus"`
+	MenuDate  string          `json:"menu_date"` // differs from the query's when this store fell back
 	Hours     []string        `json:"hours"`
 	HoursURL  string          `json:"hours_url"`
 	CheckedAt string          `json:"checked_at"`
@@ -51,15 +52,13 @@ type menuResult struct {
 	Stores      []candidateStore `json:"stores"`
 	Unavailable []missingStore   `json:"unavailable"`
 	Meal        string           `json:"-"`
-	Reference   bool             `json:"-"`
 }
 type cafeteriaCard struct {
 	Kind             string      `json:"kind"`
 	Name             string      `json:"name"`
 	Reason           string      `json:"reason"`
 	Meal             string      `json:"meal_type"`
-	Date             string      `json:"menu_date"`
-	Reference        bool        `json:"reference"`
+	Date             string      `json:"menu_date"` // the day the user will eat
 	BreakfastOptions bool        `json:"breakfast_options"`
 	Stores           []cardStore `json:"stores"`
 }
@@ -67,6 +66,7 @@ type cardStore struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Campus    string         `json:"campus"`
+	MenuDate  string         `json:"menu_date"`
 	Hours     []string       `json:"hours"`
 	HoursURL  string         `json:"hours_url"`
 	CheckedAt string         `json:"checked_at"`
@@ -97,7 +97,7 @@ func sumNutrient(total, perServing *float64, portions int) *float64 {
 // storeOffer verifies that this location serves every component at a common
 // time. Unknown nutrition stays unknown for that field of the whole meal.
 func (s candidateStore) storeOffer(portions []assistant.MenuPortion, breakfast bool) (cardStore, bool) {
-	offer := cardStore{ID: s.ID, Name: s.Name, Campus: s.Campus, HoursURL: s.HoursURL, CheckedAt: s.CheckedAt, Hours: []string{}}
+	offer := cardStore{ID: s.ID, Name: s.Name, Campus: s.Campus, MenuDate: s.MenuDate, HoursURL: s.HoursURL, CheckedAt: s.CheckedAt, Hours: []string{}}
 	total := menuNutrition{ProteinG: new(float64), FatG: new(float64), CarbsG: new(float64)}
 	price := new(int)
 	var windows []store.OpenInterval
@@ -164,7 +164,7 @@ func (q menuResult) cards(selections []assistant.MenuSelection) ([]cafeteriaCard
 		if !existing {
 			cardIndex = len(cards)
 			byBundle[key] = cardIndex
-			cards = append(cards, cafeteriaCard{Kind: "cafeteria", Reason: sel.Reason, Meal: q.Meal, Date: q.Date, Reference: q.Reference, BreakfastOptions: breakfast})
+			cards = append(cards, cafeteriaCard{Kind: "cafeteria", Reason: sel.Reason, Meal: q.Meal, Date: q.Date, BreakfastOptions: breakfast})
 		}
 		card := &cards[cardIndex]
 		for _, id := range sel.StoreIDs {
