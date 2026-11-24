@@ -39,6 +39,14 @@
   --ok: #2e7d4f;
   --ok-soft: #e4f2e8;
 
+  /* Campus tags on cafeteria cards: Yoshida yellow, Katsura green, Uji pink. */
+  --campus-yoshida: #d9a50f;
+  --campus-yoshida-soft: #fdf3cf;
+  --campus-katsura: #5e9a50;
+  --campus-katsura-soft: #e3f1de;
+  --campus-uji: #d9788c;
+  --campus-uji-soft: #fbe5ea;
+
   /* Japanese faces after the system font, so kana and kanji get Japanese glyph forms. */
   --font-text: system-ui, -apple-system, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', Meiryo, sans-serif;
   /* Rounded figures for dates, times and amounts; falls back to the text face. */
@@ -99,6 +107,13 @@
     --macro-c-soft: #1c2a3e;
     --ok: #7cc79b;
     --ok-soft: #173020;
+
+    --campus-yoshida: #e9b526;
+    --campus-yoshida-soft: #3a300f;
+    --campus-katsura: #7fb571;
+    --campus-katsura-soft: #1f3320;
+    --campus-uji: #e899a9;
+    --campus-uji-soft: #3d2229;
 
     color-scheme: dark;
   }

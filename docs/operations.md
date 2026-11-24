@@ -466,7 +466,7 @@ AWS_PROFILE=Teiyou aws ssm get-parameters --region ap-northeast-1 --names /mogum
 
 ### 6.14 食堂菜单导入（importer）
 
-`importer/` 是独立于 Go 后端和 AI 服务的 Python 程序，读取生协公开的菜单和营业时间，写入 7 张菜单相关表（计划见 `plans/cafeteria-menus.md`）。用户请求只读数据库，从不等待官网。
+`importer/` 是独立于 Go 后端和 AI 服务的 Python 程序，读取生协公开的菜单，写入菜单相关的表（计划见 `plans/cafeteria-menus.md`）。用户请求只读数据库，从不等待官网。
 
 **每次运行做什么：** `jobs.py` 对每家食堂各推进一步：08:00 起是早间采集，10:30 起是午前复查。失败的部分记在 `menu_import_jobs`，按 10 分钟、30 分钟、之后每小时重试，跨日后不再处理前一天。同一家食堂用 PostgreSQL advisory lock 保证只有一个进程在采集。所以调度器只需要「每分钟跑一次」，到期与否由任务表决定，重启或漏跑都能接着做。`importer/menus.dig` 是 Digdag 的写法：日本时间 08:00–23:59 每分钟一次。
 
@@ -529,7 +529,7 @@ sudo docker inspect -f '{{.RestartCount}}' mogumogu-importer-1   # 持续增加�
 
 **更换密码：** 同第 2 步生成新值，JSON 里加 `"Overwrite":true` 并去掉 `Tags`，在服务器上执行 `ALTER ROLE menu_importer PASSWORD :'pw'`（同第 4 步），再重新部署一次让 `.env` 更新。
 
-**临时营业公告：** 生协把学园祭、节假日等特别安排发布为 PDF（图片）。`importer/hours_notices.json` 是人工核对过的时段表，以 PDF 的 SHA-256 为键。官网换了新 PDF 而表里没有它时，相关食堂的营业时间记为「未知」，卡片附官网链接，菜单照常导入。核对新 PDF 后在表中加一项即可。
+**营业时间：** 不从官网读取（官网时间表里中央食堂、吉田食堂没有时间），固定写在 `backend/internal/httpserver/cafeteria_hours.go` 的 `regularHours` 中：平日和周六的时段，周日全部休息，祝日按平日算。生协改营业时间时改这张表并重新部署后端。导入器不再写 `cafeteria_hours`，表保留（`plans/fixed-hours.md`）。
 
 **查看进度：**
 

@@ -119,13 +119,15 @@ export interface CafeteriaCard {
   name: string
   reason: string
   meal_type: MealType
+  /** The day the meal is for; recording the card saves it on this day. */
   menu_date: string
-  reference: boolean
   breakfast_options: boolean
   stores: {
     id: string
     name: string
     campus: Campus
+    /** Earlier than the card's menu_date when this store has no menu for that day yet. */
+    menu_date: string
     hours: string[]
     hours_url: string
     checked_at: string

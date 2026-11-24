@@ -9,8 +9,8 @@
 #  4. always stops the servers and drops the database, even on failure or Ctrl+C
 #
 # Development data is never read or written. Requires the database container
-# (`make db`), a built backend (backend/bin/server) and frontend/node_modules;
-# the Makefile target takes care of all three.
+# (`make db`) and frontend/node_modules; the Makefile target takes care of both.
+# The backend is built here with the e2e tag (every cafeteria open every day).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -74,9 +74,10 @@ DB_CREATED=1
 
 docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$1"' _ "$E2E_DB" < e2e/cafeteria.sql
 
+(cd backend && go build -tags e2e -o "$WORK_DIR/server" ./cmd/server)
 DB_NAME="$E2E_DB" APP_PORT="$BACKEND_PORT" INTERNAL_PORT="$BACKEND_INTERNAL_PORT" ALLOWED_ORIGINS="$BASE_URL" \
 	AI_SERVICE_URL="http://127.0.0.1:${AI_PORT}" \
-	./backend/bin/server >"$WORK_DIR/backend.log" 2>&1 &
+	"$WORK_DIR/server" >"$WORK_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 
 (cd ai && MODEL_PROVIDER=fake GO_INTERNAL_URL="http://127.0.0.1:${BACKEND_INTERNAL_PORT}" \

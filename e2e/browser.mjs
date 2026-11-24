@@ -220,6 +220,7 @@ async function main() {
   // --- calendar ---
   const today = tokyoDate(0)
   const tomorrow = tokyoDate(1)
+  const yesterday = tokyoDate(-1)
   const [, m] = today.split('-').map(Number)
   await waitFor(`!!document.querySelector('.day.today.selected')`, 'today selected')
   check('calendar shows the current month with today selected', (await textOf('.month-nav h1')).includes(`${m}月`))
@@ -259,6 +260,17 @@ async function main() {
   const panelText = await textOf('.panel')
   check('official allergen labels are shown by name, not by site code',
     panelText.includes('卵 · 小麦由来') && !panelText.includes('wheat_origin'))
+  const shopLabels = `[...document.querySelector('.panel .rec').querySelectorAll('.shops label')]`
+  check('a store without today’s menu is listed after the stores with it', await evaluate(`${shopLabels}.map(l => l.textContent.replace(/\s+/g, ' ').trim()).join('|')`) ===
+    '中央食堂 吉田|北部食堂 吉田|吉田食堂 吉田')
+  check('today’s menu shows no earlier-menu notice', !firstCard.includes('まだ更新されていません'))
+  await evaluate(`${shopLabels}[2].querySelector('input').click()`)
+  await waitFor(`document.querySelector('.panel .rec').innerText.includes('まだ更新されていません')`, 'earlier-menu notice')
+  const earlierCard = await textOf(cardSelector)
+  const short = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`
+  check('a store’s earlier menu shows its date and that today’s is not updated yet', earlierCard.includes(yesterday) &&
+    earlierCard.includes(`${short(yesterday)} のメニューです。${short(today)} のメニューはまだ更新されていません`))
+  await evaluate(`${shopLabels}[0].querySelector('input').click()`)
   await click('.panel .close')
   await click('.fab')
   await waitFor(`document.querySelectorAll('.panel .rec').length === 2`, 'cards after reopening')
@@ -278,17 +290,20 @@ async function main() {
   const tomorrowCellExpr = `[...document.querySelectorAll('.day')].find(d => d.classList.contains('today')).nextElementSibling`
   await evaluate(`(${tomorrowCellExpr}).click()`)
   await waitFor(`!document.querySelector('.panel .target .today-mark')`, 'panel follows the selected date')
+  // Tomorrow is answered at once from today's menu (plans/simplify-hours.md).
   await fill('#assistant-input', '明日の夕食は何を食べたらいい？')
   await click('.composer button[type=submit]')
-  await waitFor(`document.querySelector('.panel')?.innerText.includes('更新されてから')`, 'ask before using today’s menu')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'two dinner cards for tomorrow')
   const ask = JSON.parse(requests.filter(r => r.url === '/api/assistant/messages').at(-1).body)
   check('future request keeps the selected date and both previous card summaries', ask.date === tomorrow &&
     ask.history.length === 1 && ask.history[0].recommendations.length === 2)
-  await fill('#assistant-input', '今日のメニューを参考に明日の夕食を選んで')
-  await click('.composer button[type=submit]')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'two reference dinner cards for tomorrow')
-  const reference = await evaluate("document.querySelectorAll('.panel .rec')[2].innerText")
-  check('tomorrow reference displays the actual menu date and unconfirmed supply', reference.includes(today) && reference.includes('参考メニュー'))
+  const reference = "document.querySelectorAll('.panel .rec')[2]"
+  check('tomorrow’s card uses today’s menu and says tomorrow’s is not updated yet', (await evaluate(`${reference}.innerText`))
+    .includes(`${short(today)} のメニューです。${short(tomorrow)} のメニューはまだ更新されていません`))
+  await evaluate(`${reference}.querySelector('button.add').click()`)
+  await waitFor(`!!${reference}.querySelector('form')`, 'meal form for tomorrow’s card')
+  check('tomorrow’s card is recorded on tomorrow', await evaluate(`${reference}.querySelector('form input[type=date]').value`) === tomorrow)
+  await evaluate(`[...${reference}.querySelectorAll('form button[type=button]')].at(-1).click()`)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.fab')`, 'calendar after reload')

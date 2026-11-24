@@ -27,11 +27,11 @@ export const en = {
   },
   menu: {
     store: 'Cafeteria',
-    unknownHours: 'Hours unconfirmed',
+    regularHours: 'Regular hours',
     hoursLink: 'Official hours',
     menuDate: 'Menu date',
     checked: 'Menu checked (JST)',
-    reference: 'Reference only. Availability on your selected date is unconfirmed.',
+    earlier: (menu: string, day: string) => `This is the ${menu} menu. The ${day} menu has not been updated yet.`,
     variant: 'Breakfast option',
     portions: 'Servings',
     nutrition: 'Official nutrition',

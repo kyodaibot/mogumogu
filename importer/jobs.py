@@ -104,14 +104,13 @@ def advance(db, store, name, source, clock, now, jobs, phase):
     attempt = previous.get("attempts", 0) + 1
     pending = previous.get("pending_details")
     base = previous.get("base_snapshot_id")
-    hours_pending = previous.get("hours_pending", True)
     if base is None:
         # The first attempt of a phase builds on today's latest verified snapshot.
         latest = db.execute("""
             SELECT id FROM menu_snapshots WHERE cafeteria_id=%s AND menu_date=%s
             ORDER BY version DESC LIMIT 1""", (store, day)).fetchone()
         base = latest["id"] if latest else None
-    hours, items = None, None
+    items = None
     errors = []
     refresh = pending is None or bool(pending)
     if refresh:
@@ -128,12 +127,8 @@ def advance(db, store, name, source, clock, now, jobs, phase):
                 errors.append(f"{len(pending)} pending details")
         except SOURCE_ERRORS as exc:
             errors.append(f"category list: {exc}")
-    if hours_pending:
-        try:
-            hours = source.hours(store, day)
-            hours_pending = False
-        except SOURCE_ERRORS as exc:
-            errors.append(f"opening hours: {exc}")
+    # Opening hours are fixed in the backend (plans/fixed-hours.md); the column stays.
+    hours_pending = False
     finished = clock().astimezone(JST)
     if finished.date() != day:
         logging.warning("Discarded %s observation crossing midnight", store)
@@ -141,14 +136,6 @@ def advance(db, store, name, source, clock, now, jobs, phase):
     with db.transaction():
         if items is not None:
             base = publish(db, store, day, finished, items)
-        if hours is not None:
-            intervals, holiday, url = hours
-            db.execute("""
-                INSERT INTO cafeteria_hours(cafeteria_id,menu_date,intervals,is_holiday,source_url,checked_at)
-                VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(cafeteria_id,menu_date) DO UPDATE
-                SET intervals=excluded.intervals,is_holiday=excluded.is_holiday,
-                    source_url=excluded.source_url,checked_at=excluded.checked_at""",
-                (store,day,Jsonb(intervals) if intervals is not None else None,holiday,url,finished))
         retry = finished + retry_delay(attempt) if errors else None
         db.execute("""
             INSERT INTO menu_import_jobs(cafeteria_id, menu_date, phase, attempts, next_retry_at,

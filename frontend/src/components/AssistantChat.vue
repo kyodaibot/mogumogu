@@ -240,7 +240,7 @@ watch(
           </ul>
           <ul v-if="turn.reply.cafeteria_cards?.length" class="recs">
             <li v-for="(card, i) in turn.reply.cafeteria_cards" :key="i" class="rec">
-              <CafeteriaCard :card="card" :date="turn.date" :added="!!turn.added?.includes(i)" @saved="mealAdded(turn, i)" />
+              <CafeteriaCard :card="card" :added="!!turn.added?.includes(i)" @saved="mealAdded(turn, i)" />
             </li>
           </ul>
           <ProposalCard

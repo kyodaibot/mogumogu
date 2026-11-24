@@ -33,8 +33,6 @@ class Feed:
             return None
         return dict(calories=310.0, protein_g=5.0, fat_g=None, carbs_g=50.0, allergens=["egg"], extra_nutrients={})
 
-    def hours(self, store, day):
-        return [{"start":"08:00","end":"15:15"}],False,"https://www.s-coop.net/"
 
 
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "requires TEST_DATABASE_URL with CREATE DATABASE")
@@ -58,6 +56,8 @@ class Publication(unittest.TestCase):
             return run_store(self.db, "650111", "中央食堂", feed, lambda:at)
         run(now)
         self.assertEqual(self.db.execute("SELECT dish_code FROM menu_items").fetchone()["dish_code"],"one")
+        # Opening hours are fixed in the backend; the importer no longer writes them.
+        self.assertEqual(self.db.execute("SELECT count(*) AS n FROM cafeteria_hours").fetchone()["n"], 0)
         retry = self.db.execute("SELECT next_retry_at FROM menu_import_jobs").fetchone()["next_retry_at"]
         self.assertEqual(retry,now+timedelta(minutes=10))
         feed.bad.clear()
