@@ -167,7 +167,7 @@ async def test_memory_tools_are_offered_only_when_allowed():
 
     _, model = await run([reply(done())])
     assert [t.name for t in model.calls[0]["tools"]] == [
-        "get_meals", "get_events", "remember", "update_memory", "forget", "submit_reply",
+        "get_meals", "get_events", "plot_nutrition", "remember", "update_memory", "forget", "submit_reply",
     ]
 
 

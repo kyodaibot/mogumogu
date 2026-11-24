@@ -342,3 +342,21 @@ func TestAllergenLabels(t *testing.T) {
 		t.Fatal("unknown and none must stay apart")
 	}
 }
+
+func TestRiceSizesUseOfficialItemsInServingWindow(t *testing.T) {
+	window := []store.OpenInterval{{Start: "11:00", End: "14:00"}}
+	middle := menuCandidate{ID: "m", Name: "（中）ライス", Windows: window, Nutrition: menuNutrition{Calories: 300}}
+	mini := menuCandidate{ID: "mini", Name: "ライスミニ", Windows: window, Nutrition: menuNutrition{Calories: 125}}
+	shop := candidateStore{Items: []menuCandidate{middle, mini,
+		{ID: "curry", Name: "（大）カレーライス", Windows: window},
+		{ID: "xl", Name: "ライス特大", Windows: []store.OpenInterval{{Start: "17:00", End: "19:00"}}},
+	}}
+	offer, ok := shop.storeOffer([]assistant.MenuPortion{{ID: "m", Portions: 2}}, false)
+	if !ok || offer.Nutrition.Calories != 300 || offer.Items[0].Portions != 1 {
+		t.Fatalf("expected one medium rice: %+v", offer)
+	}
+	options := offer.Items[0].RiceOptions
+	if len(options) != 2 || options[0].Size != "ミニ" || options[0].Nutrition.Calories != 125 || options[1].Code != "m" {
+		t.Fatalf("unexpected rice sizes: %+v", options)
+	}
+}

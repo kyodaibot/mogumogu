@@ -105,6 +105,7 @@ export type MenuNutrition = Pick<MealRecordInput, 'calories' | 'protein_g' | 'fa
 /** An official allergen label of the cafeteria, named in both interface languages. */
 export interface AllergenLabel { ja: string; en: string }
 export interface MenuItem {
+  rice_options?: (MenuItem & { size: 'ミニ' | '小' | '中' | '大' | '特大' })[]
   code: string
   name: string
   portions: number
@@ -136,7 +137,13 @@ export interface CafeteriaCard {
     price_yen: number | null
   }[]
 }
+export interface NutritionDay extends MenuNutrition {
+  date: string
+  meals: number
+}
+
 export interface AssistantReply {
+  nutrition_chart?: NutritionDay[]
   cafeteria_cards?: CafeteriaCard[]
   reply: string
   /** Empty, or exactly three. */
