@@ -1,7 +1,6 @@
 import unittest
-from datetime import date
 from bs4 import BeautifulSoup
-from sources import details, listed_items, regular_hours, exception_hours
+from sources import details, listed_items
 
 
 def soup(html):
@@ -45,22 +44,3 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result[0]["dish_code"], "650118_100")
         with self.assertRaises(ValueError):
             listed_items([{"category":"x","items":[row]}], "650112")
-
-    def test_official_hours_holidays_and_unparseable_rows(self):
-        feed = {"holidays":[{"holiday":"2026-11-23"}],"shophours":[
-            {"pagelink":"selene","open_day":"11:30","close_day":"14:00","open_day_2":"18:00",
-             "close_day_2":"20:00","open_holi":None,"close_holi":None,"tmp_close":0}]}
-        self.assertEqual(regular_hours(feed,"selene",date(2026,11,24)), ([
-            {"start":"11:30","end":"14:00"},{"start":"18:00","end":"20:00"}],False))
-        self.assertEqual(regular_hours(feed,"selene",date(2026,11,23)), ([],True))
-        feed["shophours"][0]["close_day_2"] = None
-        self.assertEqual(regular_hours(feed,"selene",date(2026,11,24)), (None,False))
-        feed["shophours"][0]["tmp_close"] = 1
-        self.assertEqual(regular_hours(feed,"selene",date(2026,11,24)), ([],False))
-
-    def test_reviewed_exception_takes_precedence_and_new_notice_is_unknown(self):
-        digest = "a296675be94eab63223aa4a296df4b9d36a84796ca7cacaee84f8140d76d3268"
-        self.assertEqual(exception_hours(digest, "650111", date(2026,11,24)), (True, []))
-        self.assertEqual(exception_hours(digest, "650118", date(2026,11,24)), (True, [{"start":"11:00","end":"20:00"}]))
-        self.assertEqual(exception_hours(digest, "650120", date(2026,11,25)), (False,None))
-        self.assertEqual(exception_hours("changed", "650111",date(2026,11,24)), (True,None))

@@ -464,3 +464,18 @@ async def test_nutrition_without_g_is_accepted():
 
     assert not outcome.retried
     assert outcome.result.recommendations[0].estimate.serving.protein_g == 35
+
+
+async def test_chart_uses_full_records_and_preserves_gaps_and_zero():
+    source = FakeSource([
+        {"date": "2026-10-02", "calories": 100, "protein_g": 0, "fat_g": 3, "carbs_g": 22},
+        {"date": "2026-10-02", "calories": 250, "protein_g": 0, "fat_g": None, "carbs_g": 40},
+    ])
+    outcome, _, _ = await run([
+        reply(query("plot_nutrition", "2026-10-01", "2026-10-03")),
+        reply(tool_call("submit_reply", reply="記録の推移です。")),
+    ], source=source)
+    assert [str(day.date) for day in outcome.nutrition_chart] == ["2026-10-01", "2026-10-02", "2026-10-03"]
+    first, middle, last = outcome.nutrition_chart
+    assert first.meals == last.meals == 0 and first.calories is last.calories is None
+    assert (middle.meals, middle.calories, middle.protein_g, middle.fat_g, middle.carbs_g) == (2, 350, 0, None, 62)

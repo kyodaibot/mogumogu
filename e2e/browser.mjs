@@ -254,11 +254,13 @@ async function main() {
   await waitFor(`document.querySelectorAll('.panel .rec').length === 2`, 'two menu-backed cards')
   const firstAsk = JSON.parse(requests.filter(r => r.url === '/api/assistant/messages').at(-1).body)
   const firstCard = await textOf(cardSelector)
-  check('lunch card shows all eligible stores and official nutrition', firstAsk.locale === 'ja' && firstAsk.date === today &&
-    firstCard.includes('中央食堂') && firstCard.includes('北部食堂') && firstCard.includes('450 kcal') && firstCard.includes(today))
+  check('lunch card identifies the default store and shows its official nutrition', firstAsk.locale === 'ja' && firstAsk.date === today &&
+    firstCard.includes('中央食堂') && !firstCard.includes('北部食堂') && firstCard.includes('450 kcal'))
   const panelText = await textOf('.panel')
   check('official allergen labels are shown by name, not by site code',
     panelText.includes('卵 · 小麦由来') && !panelText.includes('wheat_origin'))
+  check('the cafeteria is shown without a store selector', await evaluate(`!document.querySelector('.panel .rec input[type=radio]')`))
+  check('today’s menu shows no earlier-menu notice', !firstCard.includes('まだ更新されていません'))
   await click('.panel .close')
   await click('.fab')
   await waitFor(`document.querySelectorAll('.panel .rec').length === 2`, 'cards after reopening')
@@ -278,17 +280,22 @@ async function main() {
   const tomorrowCellExpr = `[...document.querySelectorAll('.day')].find(d => d.classList.contains('today')).nextElementSibling`
   await evaluate(`(${tomorrowCellExpr}).click()`)
   await waitFor(`!document.querySelector('.panel .target .today-mark')`, 'panel follows the selected date')
+  // Tomorrow is answered at once from today's menu (plans/simplify-hours.md).
   await fill('#assistant-input', '明日の夕食は何を食べたらいい？')
   await click('.composer button[type=submit]')
-  await waitFor(`document.querySelector('.panel')?.innerText.includes('更新されてから')`, 'ask before using today’s menu')
+  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'two dinner cards for tomorrow')
   const ask = JSON.parse(requests.filter(r => r.url === '/api/assistant/messages').at(-1).body)
   check('future request keeps the selected date and both previous card summaries', ask.date === tomorrow &&
     ask.history.length === 1 && ask.history[0].recommendations.length === 2)
-  await fill('#assistant-input', '今日のメニューを参考に明日の夕食を選んで')
-  await click('.composer button[type=submit]')
-  await waitFor(`document.querySelectorAll('.panel .rec').length === 4`, 'two reference dinner cards for tomorrow')
-  const reference = await evaluate("document.querySelectorAll('.panel .rec')[2].innerText")
-  check('tomorrow reference displays the actual menu date and unconfirmed supply', reference.includes(today) && reference.includes('参考メニュー'))
+  const reference = "document.querySelectorAll('.panel .rec')[2]"
+  const dinnerCard = await evaluate(`${reference}.innerText`)
+  check('tomorrow’s card leaves the menu date to the assistant summary',
+    !dinnerCard.includes('メニューの日付') && !dinnerCard.includes('まだ更新されていません') &&
+    !dinnerCard.includes('最終確認'))
+  await evaluate(`${reference}.querySelector('button.add').click()`)
+  await waitFor(`!!${reference}.querySelector('form')`, 'meal form for tomorrow’s card')
+  check('tomorrow’s card is recorded on tomorrow', await evaluate(`${reference}.querySelector('form input[type=date]').value`) === tomorrow)
+  await evaluate(`[...${reference}.querySelectorAll('form button[type=button]')].at(-1).click()`)
   await evaluate('window.__beforeReload = true')
   await send('Page.reload')
   await waitFor(`!window.__beforeReload && !!document.querySelector('.fab')`, 'calendar after reload')

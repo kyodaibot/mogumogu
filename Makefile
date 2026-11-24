@@ -25,6 +25,7 @@ help:
 	@echo "  frontend          Run the Vite dev server in the foreground (http://localhost:5173)"
 	@echo "  ai                Run the AI service in the foreground (127.0.0.1:$(AI_PORT); needs AWS credentials, see README)"
 	@echo "  ai-eval           Run the meal assistant's eval cases against the real model (costs a few cents)"
+	@echo "  quality-eval      Grade the Japanese cafeteria questions with DeepEval and the Claude API (optional CASES='KYO-006 KYO-017')"
 	@echo "  seed-local        Reset the local test accounts busy (pro), normal and light (needs 'make dev'; password: SEED_PASSWORD in .env)"
 	@echo "  menu-import       One importer tick for the cafeteria menus on the local database (optional STORE=650111)"
 	@echo "  admin             Account administration on the local database: ARGS=\"users\" or ARGS=\"tier <username> <normal|pro>\""
@@ -102,7 +103,11 @@ ai: check-env
 	@$(WITH_ENV) $(AI_RUN)
 
 ai-eval: check-env
-	@$(WITH_ENV) cd ai && uv run python evals/run_evals.py
+	@$(WITH_ENV) : "$${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY in .env or your shell}"; cd ai && uv run --locked python evals/run_evals.py
+
+.PHONY: quality-eval
+quality-eval: check-env
+	@$(WITH_ENV) bash ai/evals/run_quality.sh $(CASES)
 
 seed-local: check-env
 	@$(WITH_ENV) node scripts/seed-local.mjs
@@ -156,7 +161,7 @@ test-integration: check-env db
 	uv run --locked pytest -q
 
 # Creates and drops its own mogumogu_e2e_* database; see e2e/run.sh.
-test-e2e: check-env db backend-build frontend/node_modules
+test-e2e: check-env db frontend/node_modules
 	./e2e/run.sh
 
 # pg_dump runs inside the postgres container, so its version always matches

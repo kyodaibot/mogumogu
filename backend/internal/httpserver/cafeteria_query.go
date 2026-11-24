@@ -20,7 +20,6 @@ import (
 type MenuRequests struct{ active sync.Map }
 
 type menuRequest struct {
-	target tz.Date
 	now    time.Time
 	campus string
 	mu     sync.Mutex
@@ -52,22 +51,16 @@ func (a *api) agentMenu(c *gin.Context) {
 	}
 	req := value.(*menuRequest)
 	date, err := tz.ParseDate(c.Query("date"))
-	meal, clock, campus, cafeteria := c.Query("meal_type"), c.Query("time"), c.Query("campus"), strings.TrimSpace(c.Query("cafeteria"))
+	meal, campus, cafeteria := c.Query("meal_type"), c.Query("campus"), strings.TrimSpace(c.Query("cafeteria"))
 	var v validator
-	if err != nil || date != req.target {
+	if err != nil {
 		v.add("date", "invalid_value")
 	}
 	if !slices.Contains(mealTypes, meal) {
 		v.add("meal_type", "invalid_value")
 	}
-	if clock != "" && !validClock(clock) {
-		v.add("time", "invalid_format")
-	}
 	if campus != "" && !slices.Contains([]string{"yoshida", "uji", "katsura", "all"}, campus) {
 		v.add("campus", "invalid_value")
-	}
-	if b := c.Query("use_today"); b != "" && b != "true" && b != "false" {
-		v.add("use_today", "invalid_value")
 	}
 	v.length("cafeteria", cafeteria, 0, 80)
 	if v.failed() {
@@ -75,39 +68,36 @@ func (a *api) agentMenu(c *gin.Context) {
 		return
 	}
 
-	today := tz.Today(req.now)
-	// Weekday rules always follow the day the user will eat.
-	filter := menuFilter{meal: meal, clock: clock, day: date.Time()}
+	// date is the day the user will eat; weekday rules and regular hours follow it.
 	q := menuResult{ID: rand.Text(), Date: date.String(), Meal: meal, Stores: []candidateStore{}, Unavailable: []missingStore{}}
-	// The only cross-date fallback is tomorrow, on explicit request.
-	if today.Before(date) {
-		if today.AddDays(1) == date && c.Query("use_today") == "true" {
-			date = today
-			q.Date, q.Reference = date.String(), true
-			filter.reference = true
-		} else {
-			q.Status = "await_update"
-		}
+	if campus == "" {
+		campus = req.campus
 	}
-	if q.Status == "" {
-		if campus == "" {
-			campus = req.campus
-		}
-		if cafeteria != "" {
-			campus = "all"
-		}
-		rows, err := a.store.CafeteriaMenu(c.Request.Context(), q.Date, campus, cafeteria)
-		if err != nil {
-			abortInternal(c, a.logger, err)
-			return
-		}
-		q.populate(rows, filter)
+	if cafeteria != "" {
+		campus = "all"
 	}
+	// A past day uses only its own menu. Today and later days use their own
+	// menu, else each store's latest one from the last few days up to today
+	// (plans/simplify-hours.md).
+	oldest := date
+	if today := tz.Today(req.now); !date.Before(today) {
+		oldest = today.AddDays(-staleMenuDays)
+	}
+	rows, err := a.store.CafeteriaMenu(c.Request.Context(), date.String(), oldest.String(), campus, cafeteria)
+	if err != nil {
+		abortInternal(c, a.logger, err)
+		return
+	}
+	q.populate(rows, menuFilter{meal: meal, day: date.Time()})
 	req.mu.Lock()
 	req.result = q
 	req.mu.Unlock()
 	c.JSON(http.StatusOK, q)
 }
+
+// staleMenuDays is how many days before today a store without the day's own
+// menu may fall back to (plans/menu-stale-fallback.md).
+const staleMenuDays = 3
 
 func (q *menuResult) populate(rows []store.CafeteriaMenuRow, filter menuFilter) {
 	anySnapshot := false
@@ -125,14 +115,9 @@ func (q *menuResult) populate(rows []store.CafeteriaMenuRow, filter menuFilter) 
 		if r.DishCode == nil {
 			continue
 		}
-		// Today's opening hours and holiday flag say nothing about tomorrow.
-		hours := r.Intervals.V
-		if filter.reference {
-			hours = nil
-		} else {
-			filter.holiday = r.IsHoliday
-		}
-		windows := filter.itemWindows(r.ID, r.Categories.Items, hours)
+		f := filter
+		hours, url := hoursOn(r.ID, r.Campus, f.day)
+		windows := f.itemWindows(r.ID, r.Categories.Items, hours)
 		if len(windows) == 0 {
 			continue
 		}
@@ -140,13 +125,9 @@ func (q *menuResult) populate(rows []store.CafeteriaMenuRow, filter menuFilter) 
 		if !ok {
 			index = len(q.Stores)
 			byShop[r.ID] = index
-			url := r.HoursURL
-			if url == "" {
-				url = "https://www.s-coop.net/shop_guide/" + r.Campus + "_shop/"
-			}
-			s := candidateStore{ID: r.ID, Name: r.Name, Campus: r.Campus, HoursURL: url, Hours: []string{}, CheckedAt: tz.FormatInstant(*r.CheckedAt)}
+			s := candidateStore{ID: r.ID, Name: r.Name, Campus: r.Campus, MenuDate: r.MenuDate, HoursURL: url, Hours: []string{}, CheckedAt: tz.FormatInstant(*r.CheckedAt)}
 			if hours != nil {
-				s.Hours = displayHours(intersection(hours, []store.OpenInterval{filter.mealWindow()}))
+				s.Hours = displayHours(intersection(hours, []store.OpenInterval{f.mealWindow()}))
 			}
 			q.Stores = append(q.Stores, s)
 		}
@@ -155,6 +136,8 @@ func (q *menuResult) populate(rows []store.CafeteriaMenuRow, filter menuFilter) 
 			Categories: r.Categories.Items, Allergens: allergenLabels(r.Allergens.Items, r.Allergens.Valid), Windows: windows,
 			Nutrition: menuNutrition{Calories: r.Calories, ProteinG: r.ProteinG, FatG: r.FatG, CarbsG: r.CarbsG}})
 	}
+	// Stores with the newest menu, normally the day's own, come first.
+	slices.SortStableFunc(q.Stores, func(a, b candidateStore) int { return strings.Compare(b.MenuDate, a.MenuDate) })
 	switch {
 	case len(q.Stores) > 0:
 		q.Status = "ready"

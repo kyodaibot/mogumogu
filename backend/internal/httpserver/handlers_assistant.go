@@ -132,6 +132,7 @@ func (v *validator) history(in []turnInput) []assistant.Turn {
 
 // assistantReplyJSON is the answer to a message (docs/api.md 9.1).
 type assistantReplyJSON struct {
+	NutritionChart  []assistant.NutritionDay   `json:"nutrition_chart,omitempty"`
 	CafeteriaCards  []cafeteriaCard            `json:"cafeteria_cards,omitempty"`
 	Reply           string                     `json:"reply"`
 	Recommendations []assistant.Recommendation `json:"recommendations"`
@@ -187,6 +188,9 @@ func (a *api) checkSources(user store.User, sources []assistant.Source) []source
 	}
 	return out
 }
+
+// The evaluation build supplies a fixed instant for meal and menu context.
+var assistantContextTime = func(now time.Time) time.Time { return now }
 
 // postAssistantMessage answers one message to the meal assistant
 // (docs/api.md 9): check the quota, assemble the context, call the AI service.
@@ -255,7 +259,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 		return
 	}
 
-	reply, memories, err := a.askAssistant(ctx, user, target, message, locale, history, now)
+	reply, memories, err := a.askAssistant(ctx, user, target, message, locale, history, assistantContextTime(now))
 	var proposal *proposalJSON
 	if err == nil {
 		proposal, err = a.saveProposal(ctx, user, reply.Changes)
@@ -273,7 +277,7 @@ func (a *api) postAssistantMessage(c *gin.Context) {
 	// Only once the message is answered, so a refunded message saves nothing.
 	updates := a.saveMemories(ctx, user, reply.MemoryChanges, memories)
 	c.JSON(http.StatusOK, assistantReplyJSON{
-		Reply: reply.Reply.Reply, Recommendations: reply.Recommendations, CafeteriaCards: reply.cards,
+		NutritionChart: reply.NutritionChart, Reply: reply.Reply.Reply, Recommendations: reply.Recommendations, CafeteriaCards: reply.cards,
 		AskMealType: reply.AskMealType, MealType: reply.MealType, Proposal: proposal,
 		MemoryUpdates: updates, Sources: a.checkSources(user, reply.Sources),
 	})
@@ -322,7 +326,7 @@ func (a *api) askAssistant(ctx context.Context, user store.User, target tz.Date,
 	}
 
 	token := a.agentTokens.Issue(userID)
-	menu := &menuRequest{target: target, now: now, campus: user.Campus}
+	menu := &menuRequest{now: now, campus: user.Campus}
 	a.menuRequests.active.Store(token, menu)
 	defer a.menuRequests.active.Delete(token)
 	reply, err := a.assistant.Reply(ctx, assistant.Request{

@@ -144,7 +144,7 @@ def _meal(text: str) -> str | None:
     return next((v for k, v in _MEALS.items() if k in lowered), None)
 
 
-def _menu_reply(context: dict, messages, meal_type: str, message: str, use_today: bool):
+def _menu_reply(context: dict, messages, meal_type: str, message: str):
     """Exercise the real Go query and menu-selection boundary in local/e2e runs."""
     ja = context["locale"] == "ja"
     payload = None
@@ -156,13 +156,9 @@ def _menu_reply(context: dict, messages, meal_type: str, message: str, use_today
                 break
     if payload is None:
         args = {"meal_type": meal_type}
-        if use_today:
-            args["use_today"] = True
-        eating_time = re.search(r"(?<![0-9])(?:[01]?[0-9]|2[0-3]):[0-5][0-9]", message)
-        if eating_time:
-            args["time"] = eating_time.group().zfill(5)
-        elif "今すぐ" in message or "right now" in message:
-            args["time"] = datetime.fromisoformat(context["now"]).strftime("%H:%M")
+        # Relative days follow the time of asking, not the calendar.
+        if "明日" in message or "tomorrow" in message:
+            args["date"] = (datetime.fromisoformat(context["now"]).date() + timedelta(days=1)).isoformat()
         return reply(tool_call("get_cafeteria_menu", **args))
     # The fake cannot interpret free-text allergies or memories semantically.
     # Abstain with restricted inputs rather than suggest a misleading test meal.
@@ -184,10 +180,11 @@ def _menu_reply(context: dict, messages, meal_type: str, message: str, use_today
         choices = [{"reason": reason, "store_ids": stores, "items": [{"id": item_id, "portions": 1}]}
                    for item_id, stores in list(shared.items())[:3]]
     text = "学食のメニューです。" if ja else "From the cafeteria menu."
-    if use_today:
-        day = payload["menu_date"]
-        text = (f"{day} のメニューを参考にしています。明日の提供は未確認です。" if ja
-                else f"Based on the {day} menu. Tomorrow’s availability is unconfirmed.")
+    earlier = sorted({s["menu_date"] for s in payload["stores"] if s.get("menu_date", payload["menu_date"]) != payload["menu_date"]})
+    if earlier:
+        day, eaten = earlier[-1], payload["menu_date"]
+        text = (f"{day} のメニューを含みます。{eaten} のメニューはまだ更新されていません。" if ja
+                else f"Includes the {day} menu. The {eaten} menu has not been updated yet.")
     return reply(tool_call("submit_reply", reply=text,
                            meal_type=meal_type, menu_query_id=payload["query_id"], menu_selections=choices))
 
@@ -215,17 +212,9 @@ class DemoModel:
             if not meal_type and earlier:
                 meal_type = _meal(earlier[-1]["user"])
             now = datetime.fromisoformat(context["now"])
-            use_today = context["target_date"] == (now.date() + timedelta(days=1)).isoformat() and (
-                bool(re.search(r"今日の.{0,14}メニュー(?:で|を参考)", lowered))
-                or any(term in lowered for term in ("use today's menu", "use today’s menu", "use the current menu"))
-            )
-            if context["target_date"] > now.date().isoformat() and not use_today:
-                text = ("明日のメニューが更新されてから確認しますか？" if context["locale"] == "ja"
-                        else "Would you like to check back after tomorrow’s menu is updated?")
-                return reply(tool_call("submit_reply", reply=text))
             if not meal_type:
                 meal_type = "breakfast" if now.hour < 10 else "lunch" if now.hour < 15 else "dinner"
-            return _menu_reply(context, messages, meal_type, lowered, use_today)
+            return _menu_reply(context, messages, meal_type, lowered)
         recs = [{**r, "estimate": e} for r, e in zip(t["recommendations"], _ESTIMATES)]
         if any(a in lowered for a in _ASK) and meal_type:
             args = {"reply": t["recommend"], "recommendations": recs, "meal_type": meal_type}

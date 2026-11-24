@@ -34,6 +34,7 @@ type candidateStore struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Campus    string          `json:"campus"`
+	MenuDate  string          `json:"menu_date"` // differs from the query's when this store fell back
 	Hours     []string        `json:"hours"`
 	HoursURL  string          `json:"hours_url"`
 	CheckedAt string          `json:"checked_at"`
@@ -51,15 +52,13 @@ type menuResult struct {
 	Stores      []candidateStore `json:"stores"`
 	Unavailable []missingStore   `json:"unavailable"`
 	Meal        string           `json:"-"`
-	Reference   bool             `json:"-"`
 }
 type cafeteriaCard struct {
 	Kind             string      `json:"kind"`
 	Name             string      `json:"name"`
 	Reason           string      `json:"reason"`
 	Meal             string      `json:"meal_type"`
-	Date             string      `json:"menu_date"`
-	Reference        bool        `json:"reference"`
+	Date             string      `json:"menu_date"` // the day the user will eat
 	BreakfastOptions bool        `json:"breakfast_options"`
 	Stores           []cardStore `json:"stores"`
 }
@@ -67,6 +66,7 @@ type cardStore struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Campus    string         `json:"campus"`
+	MenuDate  string         `json:"menu_date"`
 	Hours     []string       `json:"hours"`
 	HoursURL  string         `json:"hours_url"`
 	CheckedAt string         `json:"checked_at"`
@@ -74,14 +74,59 @@ type cardStore struct {
 	Nutrition *menuNutrition `json:"nutrition"`
 	Price     *int           `json:"price_yen"`
 }
+type riceOption struct {
+	Size string `json:"size"`
+	cardItem
+}
+
 type cardItem struct {
-	Code      string          `json:"code"`
-	Name      string          `json:"name"`
-	Portions  int             `json:"portions"`
-	URL       string          `json:"url"`
-	Nutrition menuNutrition   `json:"nutrition"`
-	Price     *int            `json:"price_yen"`
-	Allergens []allergenLabel `json:"allergens"`
+	RiceOptions []riceOption    `json:"rice_options,omitempty"`
+	Code        string          `json:"code"`
+	Name        string          `json:"name"`
+	Portions    int             `json:"portions"`
+	URL         string          `json:"url"`
+	Nutrition   menuNutrition   `json:"nutrition"`
+	Price       *int            `json:"price_yen"`
+	Allergens   []allergenLabel `json:"allergens"`
+}
+
+// Only standalone rice has interchangeable sizes. Bowls and curry also carry size prefixes.
+var riceSizes = []string{"ミニ", "小", "中", "大", "特大"}
+
+func riceSize(name string) string {
+	for _, size := range riceSizes {
+		if name == "ライス"+size || name == "（"+size+"）ライス" {
+			return size
+		}
+	}
+	return ""
+}
+
+func (c menuCandidate) cardItem(portions int) cardItem {
+	return cardItem{Code: c.ID, Name: c.Name, Portions: portions, URL: c.URL,
+		Price: c.Price, Nutrition: c.Nutrition, Allergens: c.Allergens}
+}
+
+func (s candidateStore) riceOptions(selected cardItem, windows []store.OpenInterval) []riceOption {
+	options := map[string]riceOption{}
+	for _, candidate := range s.Items {
+		size := riceSize(candidate.Name)
+		if size == "" || (candidate.Allergens == nil) != (selected.Allergens == nil) ||
+			!slices.Equal(candidate.Allergens, selected.Allergens) ||
+			!slices.Equal(intersection(windows, candidate.Windows), windows) {
+			continue
+		}
+		if _, found := options[size]; !found || candidate.ID == selected.Code {
+			options[size] = riceOption{size, candidate.cardItem(1)}
+		}
+	}
+	var ordered []riceOption
+	for _, size := range riceSizes {
+		if option, ok := options[size]; ok {
+			ordered = append(ordered, option)
+		}
+	}
+	return ordered
 }
 
 var errMenuSelection = errors.New("assistant returned an invalid cafeteria selection")
@@ -97,7 +142,7 @@ func sumNutrient(total, perServing *float64, portions int) *float64 {
 // storeOffer verifies that this location serves every component at a common
 // time. Unknown nutrition stays unknown for that field of the whole meal.
 func (s candidateStore) storeOffer(portions []assistant.MenuPortion, breakfast bool) (cardStore, bool) {
-	offer := cardStore{ID: s.ID, Name: s.Name, Campus: s.Campus, HoursURL: s.HoursURL, CheckedAt: s.CheckedAt, Hours: []string{}}
+	offer := cardStore{ID: s.ID, Name: s.Name, Campus: s.Campus, MenuDate: s.MenuDate, HoursURL: s.HoursURL, CheckedAt: s.CheckedAt, Hours: []string{}}
 	total := menuNutrition{ProteinG: new(float64), FatG: new(float64), CarbsG: new(float64)}
 	price := new(int)
 	var windows []store.OpenInterval
@@ -107,8 +152,10 @@ func (s candidateStore) storeOffer(portions []assistant.MenuPortion, breakfast b
 			return cardStore{}, false
 		}
 		item := s.Items[index]
-		offer.Items = append(offer.Items, cardItem{Code: item.ID, Name: item.Name, Portions: p.Portions,
-			URL: item.URL, Price: item.Price, Nutrition: item.Nutrition, Allergens: item.Allergens})
+		if riceSize(item.Name) != "" {
+			p.Portions = 1
+		}
+		offer.Items = append(offer.Items, item.cardItem(p.Portions))
 		if i == 0 {
 			windows = item.Windows
 		} else {
@@ -131,6 +178,11 @@ func (s candidateStore) storeOffer(portions []assistant.MenuPortion, breakfast b
 		offer.Hours = displayHours(windows)
 	}
 	if !breakfast {
+		for i, item := range offer.Items {
+			if riceSize(item.Name) != "" {
+				offer.Items[i].RiceOptions = s.riceOptions(item, windows)
+			}
+		}
 		total.Calories = math.Round(total.Calories*1000) / 1000
 		offer.Nutrition, offer.Price = &total, price
 	}
@@ -164,7 +216,7 @@ func (q menuResult) cards(selections []assistant.MenuSelection) ([]cafeteriaCard
 		if !existing {
 			cardIndex = len(cards)
 			byBundle[key] = cardIndex
-			cards = append(cards, cafeteriaCard{Kind: "cafeteria", Reason: sel.Reason, Meal: q.Meal, Date: q.Date, Reference: q.Reference, BreakfastOptions: breakfast})
+			cards = append(cards, cafeteriaCard{Kind: "cafeteria", Reason: sel.Reason, Meal: q.Meal, Date: q.Date, BreakfastOptions: breakfast})
 		}
 		card := &cards[cardIndex]
 		for _, id := range sel.StoreIDs {

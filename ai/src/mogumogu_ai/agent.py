@@ -22,11 +22,11 @@ from pydantic import ValidationError
 from .cafeteria import GET_MENU, MenuQueries
 from .model import ChatModel
 from .prompt import SYSTEM_PROMPT, first_message
-from .schemas import ReplyRequest, SubmitReply
+from .schemas import NutritionDay, ReplyRequest, SubmitReply
 from .search import SearchError, SearchProvider
 from .time_budget import TimeBudget
 from .tools import (
-    MEMORY_TOOLS, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY, WEB_SEARCH,
+    MEMORY_TOOLS, PLOT_NUTRITION, QUERY_TOOLS, STAGING_TOOLS, SUBMIT_REPLY, WEB_SEARCH,
     DataSource, MemoryChanges, QueryBudget, SearchBudget, Staging, run_query, run_search,
     search_unavailable, tools_for,
 )
@@ -92,6 +92,7 @@ class Outcome:
     memory_changes: list[dict] = field(default_factory=list)
     # The reply's sources with their titles: [{"title", "url"}].
     sources: list[dict] = field(default_factory=list)
+    nutrition_chart: list[NutritionDay] = field(default_factory=list)
 
 
 def _cache_written(usage: dict) -> int:
@@ -142,14 +143,13 @@ SYSTEM = SystemMessage([{"type": "text", "text": SYSTEM_PROMPT}, {"cachePoint": 
 
 
 def build_graph(
-    model: ChatModel, source: DataSource, allergens: list[str], time: TimeBudget, counts: Counts,
+    model: ChatModel, source: DataSource, allergens: list[str], time: TimeBudget, counts: Counts, budget: QueryBudget,
     staging: Staging | None = None, memories: MemoryChanges | None = None,
     search: SearchProvider | None = None, searches: SearchBudget | None = None, menus: MenuQueries | None = None,
 ):
     """staging is None when Go does not allow proposals, memories when it
     does not allow memories, search when searching is not allowed or not set
     up; their tools are then not offered."""
-    budget = QueryBudget()
     searches = searches or SearchBudget()
     tools_offered = tools_for(staging is not None, memories is not None, search is not None, menus is not None)
     runnable = (
@@ -198,7 +198,7 @@ def build_graph(
         # Changes staged next to submit_reply (with a query or a meal change)
         # are staged first, so they are not lost; the model submits again
         # after seeing the results.
-        if can_run and names & (_STAGING_NAMES | _MEMORY_NAMES) and names - {SUBMIT_REPLY.name} <= runnable:
+        if can_run and names & (_STAGING_NAMES | _MEMORY_NAMES | {PLOT_NUTRITION.name}) and names - {SUBMIT_REPLY.name} <= runnable:
             return "tools"
         if SUBMIT_REPLY.name in names:
             return "validate"
@@ -242,12 +242,14 @@ def build_graph(
         # Go binds only the most recent menu query to the request. In a tool
         # batch issue a single lookup so a slower response cannot replace it.
         menu_calls = [c for c in calls if c["name"] == GET_MENU.name]
-        fetches = [c for c in calls if c["name"] in _FETCH_NAMES and c not in menu_calls[1:]]
+        chart_calls = [c for c in calls if c["name"] == PLOT_NUTRITION.name]
+        fetches = [c for c in calls if c["name"] in _FETCH_NAMES and c not in menu_calls[1:] + chart_calls[1:]]
         if any(c["name"] == WEB_SEARCH.name for c in fetches):
             searches.rounds += 1
         answers = dict(zip((c["id"] for c in fetches), await asyncio.gather(*(fetch(c) for c in fetches))))
         answers.update({c["id"]: "Use one campus/time query at a time; this query was not run."
                         for c in menu_calls[1:]})
+        answers.update({c["id"]: "One chart per reply; this range was skipped." for c in chart_calls[1:]})
         # After the queries, which may show the ids of the records to change.
         for c in calls:
             if c["name"] in _STAGING_NAMES:
@@ -306,14 +308,19 @@ def build_graph(
         finish = state["finish"] or "submitted"
         last = state["messages"][-1]
         submit = next((c for c in last.tool_calls if c["name"] == SUBMIT_REPLY.name), None)
-        checked = check_reply(submit["args"], allergens, searches.found) if submit else "submit_reply was not called"
+        args = menus.fix_query_id(submit["args"]) if submit and menus else submit and submit["args"]
+        checked = check_reply(args, allergens, searches.found) if submit else "submit_reply was not called"
         if isinstance(checked, SubmitReply):
             if menus:
-                checked = menus.check(checked) or checked
+                checked = menus.prune_stores(menus.merge_breakfast(checked))
+                checked = menus.check(checked) or menus.disclose(checked)
             elif checked.menu_selections:
                 checked = "The cafeteria menu is unavailable for this request."
         if isinstance(checked, SubmitReply):
             return {"result": checked.rounded(), "finish": finish}
+        # Which check failed; the allergen check names the user's allergen, so only its kind is logged.
+        log.info("validation failed%s: %s", " again" if state["retried"] else "",
+                 "allergen in a recommendation" if checked.startswith("Recommendation \"") else checked[:300])
         if state["retried"]:
             return {"error": "invalid_output", "finish": finish}
         if time.timeout_for("final") is None:
@@ -367,8 +374,9 @@ async def run_agent(
     memories = MemoryChanges(req.context.memories, req.message) if req.context.allow_memory else None
     searches = SearchBudget()
     search = search if req.context.allow_search else None
-    menus = MenuQueries(req.context.target_date) if req.context.campus else None
-    graph = build_graph(model, source, allergens, time, counts, staging, memories, search, searches, menus)
+    menus = MenuQueries(req.context.target_date, req.context.locale) if req.context.campus else None
+    budget = QueryBudget()
+    graph = build_graph(model, source, allergens, time, counts, budget, staging, memories, search, searches, menus)
     init: State = {
         "messages": [HumanMessage(first_message(req.context, req.message, req.history))],
         "out_of_time": False,
@@ -400,5 +408,6 @@ async def run_agent(
         cache_write_tokens=sum(_cache_written(u) for u in usage),
         changes=staging.changes if staging and final["result"] else [],
         memory_changes=memories.changes if memories and final["result"] else [],
+        nutrition_chart=budget.nutrition_chart if final["result"] else [],
         sources=[{"title": searches.found[u], "url": u} for u in final["result"].sources] if final["result"] else [],
     )
